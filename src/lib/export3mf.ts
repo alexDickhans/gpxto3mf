@@ -78,6 +78,10 @@ class XmlSink {
   }
 }
 
+function asBlobPart(data: Uint8Array): BlobPart {
+  return data as BlobPart
+}
+
 class StoreZip {
   private parts: BlobPart[] = []
   private offset = 0
@@ -100,8 +104,8 @@ class StoreZip {
     view.setUint16(26, nameBytes.length, true)
     view.setUint16(28, 0, true)
     header.set(nameBytes, 30)
-    this.parts.push(header)
-    for (const chunk of body.chunks) this.parts.push(chunk)
+    this.parts.push(asBlobPart(header))
+    for (const chunk of body.chunks) this.parts.push(asBlobPart(chunk))
     this.entries.push({
       name,
       crc: body.crc,
@@ -112,7 +116,7 @@ class StoreZip {
   }
 
   blob() {
-    const central: Uint8Array[] = []
+    const central: BlobPart[] = []
     let centralSize = 0
     for (const entry of this.entries) {
       const nameBytes = encoder.encode(entry.name)
@@ -136,7 +140,7 @@ class StoreZip {
       view.setUint32(38, 0, true)
       view.setUint32(42, entry.offset, true)
       rec.set(nameBytes, 46)
-      central.push(rec)
+      central.push(asBlobPart(rec))
       centralSize += rec.length
     }
     const end = new Uint8Array(22)
@@ -146,7 +150,7 @@ class StoreZip {
     view.setUint16(10, this.entries.length, true)
     view.setUint32(12, centralSize, true)
     view.setUint32(16, this.offset, true)
-    return new Blob([...this.parts, ...central, end], {
+    return new Blob([...this.parts, ...central, asBlobPart(end)], {
       type: 'application/vnd.ms-package.3dmanufacturing-3dmodel+xml',
     })
   }
