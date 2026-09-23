@@ -17,6 +17,7 @@ export type PipelineSettings = {
   bboxPadPercent: number
   fetchResolution: number
   minColorRegionMm: number
+  colorEdgeSmooth: number
   routeColorIndex: number | null
 }
 
@@ -57,6 +58,7 @@ export async function runPipeline(
     routeWidthMm: settings.routeWidthMm,
     routeColorIndex,
     minColorRegionMm: settings.minColorRegionMm,
+    colorEdgeSmooth: settings.colorEdgeSmooth,
   })
 
   onProgress?.('Ready')
