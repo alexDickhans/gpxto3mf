@@ -1,0 +1,21 @@
+{
+  "name": "Crag AMS Library",
+  "colors": [
+    { "name": "Stone", "hex": "#8A7F72", "enabled": true },
+    { "name": "Granite", "hex": "#9A958C", "enabled": true },
+    { "name": "Sand", "hex": "#C4A882", "enabled": true },
+    { "name": "Clay", "hex": "#A66B4A", "enabled": false },
+    { "name": "Earth", "hex": "#6E4B32", "enabled": true },
+    { "name": "Dirt", "hex": "#5C4030", "enabled": false },
+    { "name": "Lichen", "hex": "#6B7F4A", "enabled": true },
+    { "name": "Moss", "hex": "#4A6B3A", "enabled": false },
+    { "name": "Forest", "hex": "#2F4A38", "enabled": true },
+    { "name": "Sage", "hex": "#7A8F6E", "enabled": false },
+    { "name": "Water", "hex": "#3D6B8A", "enabled": false },
+    { "name": "Ice", "hex": "#B8D4E0", "enabled": false },
+    { "name": "Snow", "hex": "#E8E4DC", "enabled": true },
+    { "name": "Shadow", "hex": "#3A3F3C", "enabled": true },
+    { "name": "Charcoal", "hex": "#2A2A2A", "enabled": false },
+    { "name": "Route", "hex": "#E23B2F", "enabled": true }
+  ]
+}

@@ -1,0 +1,20 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<gpx version="1.1" creator="gpxto3mf-sample">
+  <metadata><name>Sample Crag Loop</name></metadata>
+  <trk>
+    <name>Sample Crag Loop</name>
+    <trkseg>
+      <trkpt lat="37.7301" lon="-119.5736"><ele>2200</ele></trkpt>
+      <trkpt lat="37.7312" lon="-119.5720"><ele>2225</ele></trkpt>
+      <trkpt lat="37.7325" lon="-119.5705"><ele>2260</ele></trkpt>
+      <trkpt lat="37.7338" lon="-119.5698"><ele>2290</ele></trkpt>
+      <trkpt lat="37.7350" lon="-119.5710"><ele>2310</ele></trkpt>
+      <trkpt lat="37.7362" lon="-119.5730"><ele>2285</ele></trkpt>
+      <trkpt lat="37.7355" lon="-119.5750"><ele>2250</ele></trkpt>
+      <trkpt lat="37.7340" lon="-119.5762"><ele>2210</ele></trkpt>
+      <trkpt lat="37.7322" lon="-119.5755"><ele>2185</ele></trkpt>
+      <trkpt lat="37.7308" lon="-119.5745"><ele>2195</ele></trkpt>
+      <trkpt lat="37.7301" lon="-119.5736"><ele>2200</ele></trkpt>
+    </trkseg>
+  </trk>
+</gpx>
