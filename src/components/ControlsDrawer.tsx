@@ -12,6 +12,7 @@ export type ControlValues = {
   bboxPadPercent: number
   fetchResolution: number
   minColorRegionMm: number
+  colorEdgeSmooth: number
   showNorth: boolean
   showScale: boolean
 }
@@ -75,6 +76,23 @@ export function ControlsDrawer({
           step={0.5}
           value={values.minColorRegionMm}
           onChange={(e) => set('minColorRegionMm', parseFloat(e.target.value))}
+        />
+      </label>
+
+      <label className="field">
+        <span>
+          Color edge smooth · {Math.round(values.colorEdgeSmooth * 100)}%
+          <em className="field-sub"> (round stair-stepped color borders)</em>
+        </span>
+        <input
+          type="range"
+          min={0}
+          max={100}
+          step={5}
+          value={Math.round(values.colorEdgeSmooth * 100)}
+          onChange={(e) =>
+            set('colorEdgeSmooth', parseInt(e.target.value, 10) / 100)
+          }
         />
       </label>
 
@@ -175,6 +193,7 @@ export function ControlsDrawer({
             bboxPadPercent: DEFAULTS.bboxPadPercent,
             fetchResolution: DEFAULTS.fetchResolution,
             minColorRegionMm: DEFAULTS.minColorRegionMm,
+            colorEdgeSmooth: DEFAULTS.colorEdgeSmooth,
             showNorth: DEFAULTS.showNorth,
             showScale: DEFAULTS.showScale,
           })

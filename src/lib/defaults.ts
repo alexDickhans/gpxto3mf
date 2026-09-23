@@ -26,6 +26,8 @@ export const DEFAULTS = {
    * neighbors so AMS contours stay printable.
    */
   minColorRegionMm: 4,
+  /** 0 = stair-stepped color edges, 1 = rounded anti-aliased contours */
+  colorEdgeSmooth: 0.75,
   showNorth: true,
   showScale: true,
 } as const

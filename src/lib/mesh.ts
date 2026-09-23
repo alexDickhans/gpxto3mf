@@ -1,5 +1,4 @@
 import type { HeightGrid } from './dem'
-import { sampleHeight } from './dem'
 import type { ColorGrid } from './imagery'
 import {
   enabledColorIndices,
@@ -8,7 +7,7 @@ import {
   type Palette,
 } from './palette'
 import { toLocalMeters, type LatLon } from './geo'
-import { smoothCellMaterials } from './colorSmooth'
+import { smoothCellMaterials, smoothColorBoundary } from './colorSmooth'
 
 export type Vec3 = { x: number; y: number; z: number }
 
@@ -35,6 +34,8 @@ export type BuildOptions = {
   routeColorIndex: number
   /** Min printable color patch size in mm — speckles below this merge into neighbors */
   minColorRegionMm?: number
+  /** 0 keeps pixel edges, 1 rounds color borders into smooth contours */
+  colorEdgeSmooth?: number
   baseThicknessMm?: number
   /** Inset distance over which the top surface rolls down to the base. */
   skirtMm?: number
@@ -239,83 +240,148 @@ export function buildTerrainModel(
     return i
   }
 
-  // Top surface
-  for (let j = 0; j < rows - 1; j++) {
-    for (let i = 0; i < cols - 1; i++) {
-      const a = j * cols + i
-      const b = a + 1
-      const c = a + cols
-      const d = c + 1
+  // Face-connected regions of one color. Regions that only meet at a corner
+  // get their own vertex copies so that shared corner column is not a
+  // non-manifold edge.
+  const cellComp = new Int32Array(cellW * cellH)
+  cellComp.fill(-1)
+  let compCount = 0
+  const stack: number[] = []
+  for (let start = 0; start < cellComp.length; start++) {
+    if (cellComp[start] >= 0) continue
+    const color = cellMat[start]
+    const id = compCount++
+    stack.push(start)
+    cellComp[start] = id
+    while (stack.length) {
+      const cur = stack.pop()!
+      const cj = Math.floor(cur / cellW)
+      const ci = cur - cj * cellW
+      const neighbors = [
+        ci - 1, cj, ci + 1, cj, ci, cj - 1, ci, cj + 1,
+      ]
+      for (let n = 0; n < neighbors.length; n += 2) {
+        const ni = neighbors[n]
+        const nj = neighbors[n + 1]
+        if (ni < 0 || nj < 0 || ni >= cellW || nj >= cellH) continue
+        const nk = nj * cellW + ni
+        if (cellComp[nk] >= 0 || cellMat[nk] !== color) continue
+        cellComp[nk] = id
+        stack.push(nk)
+      }
+    }
+  }
+
+  const smoothX = new Float32Array(topCount)
+  const smoothY = new Float32Array(topCount)
+  for (let j = 0; j < rows; j++) {
+    for (let i = 0; i < cols; i++) {
+      const vi = j * cols + i
+      const o = vi * 3
+      smoothX[vi] = positions[o]
+      smoothY[vi] = positions[o + 1]
+    }
+  }
+  smoothColorBoundary(
+    smoothX,
+    smoothY,
+    cellMat,
+    cols,
+    rows,
+    opts.colorEdgeSmooth ?? 0.75,
+  )
+
+  const vertOf = new Map<number, number>()
+  const corner = (gridIndex: number, component: number) => {
+    const key = component * vertCount + gridIndex
+    const found = vertOf.get(key)
+    if (found !== undefined) return found
+    const column = gridIndex >= topCount ? gridIndex - topCount : gridIndex
+    const o = gridIndex * 3
+    const id = pushV(smoothX[column], smoothY[column], posList[o + 2])
+    vertOf.set(key, id)
+    return id
+  }
+
+  // One solid per color: each cell is a column from z=0 to the rolled
+  // surface. Walls are emitted only on a different color or the map edge.
+  const topOf = (i: number, j: number) => j * cols + i
+  const botOf = (i: number, j: number) => topCount + j * cols + i
+  const sameColor = (i: number, j: number, ni: number, nj: number) => {
+    if (ni < 0 || nj < 0 || ni >= cellW || nj >= cellH) return false
+    return cellMat[nj * cellW + ni] === cellMat[j * cellW + i]
+  }
+
+  for (let j = 0; j < cellH; j++) {
+    for (let i = 0; i < cellW; i++) {
       const mat = terrainToMat.get(cellMat[j * cellW + i]) ?? 0
+      const component = cellComp[j * cellW + i]
+      const a = corner(topOf(i, j), component)
+      const b = corner(topOf(i + 1, j), component)
+      const c = corner(topOf(i, j + 1), component)
+      const d = corner(topOf(i + 1, j + 1), component)
+      const aB = corner(botOf(i, j), component)
+      const bB = corner(botOf(i + 1, j), component)
+      const cB = corner(botOf(i, j + 1), component)
+      const dB = corner(botOf(i + 1, j + 1), component)
+
       addTri(a, b, d, mat)
       addTri(a, d, c, mat)
+      addTri(aB, dB, bB, mat)
+      addTri(aB, cB, dB, mat)
+
+      const wall = (t0: number, t1: number, b0: number, b1: number) => {
+        addTri(t0, b0, b1, mat)
+        addTri(t0, b1, t1, mat)
+      }
+      if (!sameColor(i, j, i, j - 1)) wall(a, b, aB, bB)
+      if (!sameColor(i, j, i + 1, j)) wall(b, d, bB, dB)
+      if (!sameColor(i, j, i, j + 1)) wall(d, c, dB, cB)
+      if (!sameColor(i, j, i - 1, j)) wall(c, a, cB, aB)
     }
   }
 
-  // Bottom
-  const bottomMat = 0
-  for (let j = 0; j < rows - 1; j++) {
-    for (let i = 0; i < cols - 1; i++) {
-      const a = topCount + j * cols + i
-      const b = a + 1
-      const c = a + cols
-      const d = c + 1
-      addTri(a, d, b, bottomMat)
-      addTri(a, c, d, bottomMat)
-    }
-  }
-
-  // Short vertical rim: the rolled skirt meets the wall at base thickness
-  // and the wall drops to the flat z=0 base. Same footprint, no gap.
-  const wallMat = 0
-  for (let i = 0; i < cols - 1; i++) {
-    const t0 = i
-    const t1 = i + 1
-    addTri(t0, topCount + i, topCount + i + 1, wallMat)
-    addTri(t0, topCount + i + 1, t1, wallMat)
-    const n0 = (rows - 1) * cols + i
-    const n1 = n0 + 1
-    addTri(n0, topCount + n1, topCount + n0, wallMat)
-    addTri(n0, n1, topCount + n1, wallMat)
-  }
-  for (let j = 0; j < rows - 1; j++) {
-    const t0 = j * cols
-    const t1 = (j + 1) * cols
-    addTri(t0, topCount + t1, topCount + t0, wallMat)
-    addTri(t0, t1, topCount + t1, wallMat)
-    const e0 = j * cols + (cols - 1)
-    const e1 = (j + 1) * cols + (cols - 1)
-    addTri(e0, topCount + e0, topCount + e1, wallMat)
-    addTri(e0, topCount + e1, e1, wallMat)
-  }
-
-  // Route — closed rectangular tube (sides + caps, or looped join)
+  // Route — closed rectangular tube seated on the triangulated surface.
   const routeHalfW = opts.routeWidthMm / 2
   const routeH = opts.routeHeightMm
-  const routeRaw: { x: number; y: number; zTop: number }[] = []
+  const spanX = widthM * scale
+  const spanY = heightM * scale
+  const meshZ = (x: number, y: number) => {
+    if (cols < 2 || rows < 2 || spanX <= 0 || spanY <= 0) return baseThicknessMm
+    const u = x / spanX + 0.5
+    const v = y / spanY + 0.5
+    const gx = Math.min(cols - 1 - 1e-6, Math.max(0, u * (cols - 1)))
+    const gy = Math.min(rows - 1 - 1e-6, Math.max(0, v * (rows - 1)))
+    const i0 = Math.floor(gx)
+    const j0 = Math.floor(gy)
+    const fx = gx - i0
+    const fy = gy - j0
+    const zAt = (ci: number, cj: number) => positions[(cj * cols + ci) * 3 + 2]
+    const z00 = zAt(i0, j0)
+    const z10 = zAt(i0 + 1, j0)
+    const z01 = zAt(i0, j0 + 1)
+    const z11 = zAt(i0 + 1, j0 + 1)
+    // Match the cell split (a,b,d) / (a,d,c), not a bilinear patch.
+    if (fx >= fy) return z00 * (1 - fx) + z10 * (fx - fy) + z11 * fy
+    return z00 * (1 - fy) + z11 * fx + z01 * (fy - fx)
+  }
+
+  const routeRaw: { x: number; y: number }[] = []
   for (const p of track) {
     const { x, y } = toLocalMeters(p.lat, p.lon, bbox)
     const xm = (x - widthM / 2) * scale
     const ym = (y - heightM / 2) * scale
-    const zTop = surfaceZ(xm, ym, sampleHeight(height, p.lat, p.lon)) + routeH
-    routeRaw.push({ x: xm, y: ym, zTop })
+    const prev = routeRaw[routeRaw.length - 1]
+    if (prev && Math.hypot(xm - prev.x, ym - prev.y) < 0.05) continue
+    routeRaw.push({ x: xm, y: ym })
   }
 
-  const routePts: typeof routeRaw = []
-  for (const p of routeRaw) {
-    const prev = routePts[routePts.length - 1]
-    if (prev && Math.hypot(p.x - prev.x, p.y - prev.y) < 0.15) continue
-    routePts.push(p)
-  }
+  const cellMm = Math.min(
+    spanX / Math.max(1, cols - 1),
+    spanY / Math.max(1, rows - 1),
+  )
+  let pts = resamplePolyline(routeRaw, Math.max(0.35, cellMm * 0.85), 8000)
 
-  let pts = routePts
-  const maxRoute = Math.min(600, Math.max(80, Math.floor(cols * 1.5)))
-  if (pts.length > maxRoute) {
-    const step = Math.ceil(pts.length / maxRoute)
-    pts = pts.filter((_, i) => i % step === 0 || i === pts.length - 1)
-  }
-
-  // Closed loop if endpoints meet
   let routeClosed = false
   if (pts.length >= 3) {
     const a = pts[0]
@@ -323,25 +389,6 @@ export function buildTerrainModel(
     if (Math.hypot(a.x - b.x, a.y - b.y) < Math.max(routeHalfW * 2, 0.8)) {
       pts = pts.slice(0, -1)
       routeClosed = pts.length >= 3
-    }
-  }
-
-  if (pts.length >= 3) {
-    const zs = pts.map((p) => p.zTop)
-    for (let i = 1; i < pts.length - 1; i++) {
-      pts[i] = {
-        ...pts[i],
-        zTop: zs[i - 1] * 0.25 + zs[i] * 0.5 + zs[i + 1] * 0.25,
-      }
-    }
-    if (routeClosed) {
-      pts[0] = {
-        ...pts[0],
-        zTop:
-          pts[pts.length - 1].zTop * 0.25 +
-          zs[0] * 0.5 +
-          pts[1].zTop * 0.25,
-      }
     }
   }
 
@@ -365,12 +412,18 @@ export function buildTerrainModel(
       }
       const nx = (-dy / len) * routeHalfW
       const ny = (dx / len) * routeHalfW
-      const zBot = p.zTop - routeH
+      const zSurf = Math.min(
+        meshZ(p.x, p.y),
+        meshZ(p.x + nx, p.y + ny),
+        meshZ(p.x - nx, p.y - ny),
+      )
+      const zBot = zSurf - 0.35
+      const zTop = zBot + routeH
       rings.push({
         bl: pushV(p.x + nx, p.y + ny, zBot),
         br: pushV(p.x - nx, p.y - ny, zBot),
-        tl: pushV(p.x + nx, p.y + ny, p.zTop),
-        tr: pushV(p.x - nx, p.y - ny, p.zTop),
+        tl: pushV(p.x + nx, p.y + ny, zTop),
+        tr: pushV(p.x - nx, p.y - ny, zTop),
       })
     }
 
@@ -431,4 +484,37 @@ export function buildTerrainModel(
     scaleMmPerM: scale,
     northAngle: 0,
   }
+}
+
+function resamplePolyline(
+  points: { x: number; y: number }[],
+  spacing: number,
+  maxPoints: number,
+) {
+  if (points.length < 2) return points
+  const cumulative = [0]
+  for (let i = 1; i < points.length; i++) {
+    const prev = cumulative[i - 1]
+    cumulative.push(
+      prev +
+        Math.hypot(points[i].x - points[i - 1].x, points[i].y - points[i - 1].y),
+    )
+  }
+  const length = cumulative[cumulative.length - 1]
+  if (length < 1e-4) return [points[0]]
+  let count = Math.max(2, Math.ceil(length / Math.max(0.05, spacing)) + 1)
+  if (count > maxPoints) count = maxPoints
+  const step = length / (count - 1)
+  const out: { x: number; y: number }[] = []
+  let seg = 1
+  for (let k = 0; k < count; k++) {
+    const dist = k === count - 1 ? length : k * step
+    while (seg < cumulative.length - 1 && cumulative[seg] < dist) seg++
+    const span = cumulative[seg] - cumulative[seg - 1]
+    const t = span < 1e-9 ? 0 : (dist - cumulative[seg - 1]) / span
+    const a = points[seg - 1]
+    const b = points[seg]
+    out.push({ x: a.x + (b.x - a.x) * t, y: a.y + (b.y - a.y) * t })
+  }
+  return out
 }

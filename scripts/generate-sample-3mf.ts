@@ -106,6 +106,7 @@ async function main() {
     routeWidthMm: DEFAULTS.routeWidthMm,
     routeColorIndex: DEFAULT_PALETTE.colors.findIndex((c) => /route/i.test(c.name)),
     minColorRegionMm: DEFAULTS.minColorRegionMm,
+    colorEdgeSmooth: DEFAULTS.colorEdgeSmooth,
   })
   const base = 2.5
   const halfW = (widthM * model.scaleMmPerM) / 2

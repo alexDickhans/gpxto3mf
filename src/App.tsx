@@ -26,6 +26,7 @@ const initialControls: ControlValues = {
   bboxPadPercent: DEFAULTS.bboxPadPercent,
   fetchResolution: DEFAULTS.fetchResolution,
   minColorRegionMm: DEFAULTS.minColorRegionMm,
+  colorEdgeSmooth: DEFAULTS.colorEdgeSmooth,
   showNorth: DEFAULTS.showNorth,
   showScale: DEFAULTS.showScale,
 }
@@ -60,6 +61,7 @@ function App() {
             bboxPadPercent: controls.bboxPadPercent,
             fetchResolution: controls.fetchResolution,
             minColorRegionMm: controls.minColorRegionMm,
+            colorEdgeSmooth: controls.colorEdgeSmooth,
             routeColorIndex: routeIdx,
           },
           (msg) => setStatus(msg),
@@ -69,7 +71,7 @@ function App() {
           setTrackName(result.track.name)
           setRouteColorIndex(result.routeColorIndex)
           setStatus(
-            `${result.track.name} · ${result.model.materials.length} AMS slots · ${result.model.extentMm.x.toFixed(0)}×${result.model.extentMm.y.toFixed(0)} mm`,
+            `${result.track.name} · ${result.model.materials.length} color meshes · ${result.model.extentMm.x.toFixed(0)}×${result.model.extentMm.y.toFixed(0)} mm`,
           )
         })
       } catch (err) {
@@ -117,7 +119,7 @@ function App() {
       const safe = (trackName || 'topo').replace(/[^\w.-]+/g, '_')
       downloadBlob(blob, `${safe}.3mf`)
       setStatus(
-        `Downloaded ${safe}.3mf — in Bambu use File → Import (not Open Project)`,
+        `Downloaded ${safe}.3mf — ${model.materials.length} objects, one per color. In Bambu use File → Import.`,
       )
     } catch (err) {
       setStatus(err instanceof Error ? err.message : 'Export failed')

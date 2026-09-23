@@ -146,3 +146,137 @@ export function smoothCellMaterials(
   out = dissolveSmallRegions(out, cols, rows, minCells)
   return out
 }
+
+/**
+ * Pull stair-stepped color borders toward a smooth contour.
+ * `xs`/`ys` are vertex-grid coordinates (cols = cellCols+1). Only vertices that
+ * sit on a color change move; the outer rectangle stays put. Displacement is
+ * capped to just under half a cell so adjacent quads cannot flip.
+ * `strength` is 0 (pixel edges) … 1 (fully rounded).
+ */
+export function smoothColorBoundary(
+  xs: Float32Array,
+  ys: Float32Array,
+  cells: Uint16Array,
+  cols: number,
+  rows: number,
+  strength: number,
+): void {
+  if (strength <= 0.001 || cols < 3 || rows < 3) return
+  const cellW = cols - 1
+  const cellH = rows - 1
+  const t = Math.max(0, Math.min(1, strength))
+
+  const colorAt = (ci: number, cj: number) => {
+    if (ci < 0 || cj < 0 || ci >= cellW || cj >= cellH) return -1
+    return cells[cj * cellW + ci]
+  }
+
+  const boundaryEdge = (i0: number, j0: number, i1: number, j1: number) => {
+    if (j0 === j1) {
+      const i = Math.min(i0, i1)
+      const north = colorAt(i, j0)
+      const south = colorAt(i, j0 - 1)
+      return north >= 0 && south >= 0 && north !== south
+    }
+    const j = Math.min(j0, j1)
+    const east = colorAt(i0, j)
+    const west = colorAt(i0 - 1, j)
+    return east >= 0 && west >= 0 && east !== west
+  }
+
+  const count = cols * rows
+  const contour = new Uint8Array(count)
+  for (let j = 0; j < rows; j++) {
+    for (let i = 0; i < cols; i++) {
+      const here = j * cols + i
+      if (i + 1 < cols && boundaryEdge(i, j, i + 1, j)) {
+        contour[here] = 1
+        contour[here + 1] = 1
+      }
+      if (j + 1 < rows && boundaryEdge(i, j, i, j + 1)) {
+        contour[here] = 1
+        contour[here + cols] = 1
+      }
+    }
+  }
+
+  const movers: number[] = []
+  for (let j = 1; j < rows - 1; j++) {
+    for (let i = 1; i < cols - 1; i++) {
+      const idx = j * cols + i
+      if (contour[idx]) movers.push(idx)
+    }
+  }
+  if (movers.length === 0) return
+
+  let cellX = Infinity
+  let cellY = Infinity
+  for (let i = 0; i < cols - 1; i++) {
+    cellX = Math.min(cellX, Math.abs(xs[i + 1] - xs[i]))
+  }
+  for (let j = 0; j < rows - 1; j++) {
+    const a = j * cols
+    const b = (j + 1) * cols
+    cellY = Math.min(cellY, Math.abs(ys[b] - ys[a]))
+  }
+  if (!Number.isFinite(cellX) || !Number.isFinite(cellY)) return
+  const maxDx = cellX * 0.48
+  const maxDy = cellY * 0.48
+
+  const origX = xs.slice()
+  const origY = ys.slice()
+  const nextX = new Float32Array(count)
+  const nextY = new Float32Array(count)
+  const dirs = [
+    [-1, 0],
+    [1, 0],
+    [0, -1],
+    [0, 1],
+  ] as const
+
+  const iterations = 24
+  const lambda = 0.55
+  for (let iter = 0; iter < iterations; iter++) {
+    for (const vi of movers) {
+      const i = vi % cols
+      const j = (vi / cols) | 0
+      let sx = 0
+      let sy = 0
+      let n = 0
+      for (const [di, dj] of dirs) {
+        const ni = i + di
+        const nj = j + dj
+        if (!boundaryEdge(i, j, ni, nj)) continue
+        const nk = nj * cols + ni
+        sx += xs[nk]
+        sy += ys[nk]
+        n++
+      }
+      if (n === 0) {
+        nextX[vi] = xs[vi]
+        nextY[vi] = ys[vi]
+        continue
+      }
+      let x = xs[vi] + (sx / n - xs[vi]) * lambda
+      let y = ys[vi] + (sy / n - ys[vi]) * lambda
+      const dx = x - origX[vi]
+      const dy = y - origY[vi]
+      if (dx > maxDx) x = origX[vi] + maxDx
+      else if (dx < -maxDx) x = origX[vi] - maxDx
+      if (dy > maxDy) y = origY[vi] + maxDy
+      else if (dy < -maxDy) y = origY[vi] - maxDy
+      nextX[vi] = x
+      nextY[vi] = y
+    }
+    for (const vi of movers) {
+      xs[vi] = nextX[vi]
+      ys[vi] = nextY[vi]
+    }
+  }
+
+  for (const vi of movers) {
+    xs[vi] = origX[vi] + (xs[vi] - origX[vi]) * t
+    ys[vi] = origY[vi] + (ys[vi] - origY[vi]) * t
+  }
+}
