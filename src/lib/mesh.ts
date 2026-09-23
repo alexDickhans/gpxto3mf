@@ -36,6 +36,8 @@ export type BuildOptions = {
   /** Min printable color patch size in mm — speckles below this merge into neighbors */
   minColorRegionMm?: number
   baseThicknessMm?: number
+  /** Inset distance over which the top surface rolls down to the base. */
+  skirtMm?: number
 }
 
 /** Sample color grid onto mesh resolution (handles mismatched fetch sizes). */
@@ -151,6 +153,32 @@ export function buildTerrainModel(
   const elevMm = (h: number) =>
     (h - minH) * scale * opts.exaggeration + baseThicknessMm
 
+  const halfW = (widthM * scale) / 2
+  const halfH = (heightM * scale) / 2
+  const minHalf = Math.min(halfW, halfH)
+  const skirtMm = Math.min(
+    opts.skirtMm ?? Math.min(18, Math.max(8, minHalf * 0.16)),
+    minHalf * 0.45,
+  )
+
+  /**
+   * Quarter-circle roll: 1 in the interior, 0 on the perimeter, with a
+   * vertical tangent at the rim so the surface wraps down into the side wall.
+   */
+  const roll = (dist: number) => {
+    if (!(skirtMm > 0) || dist >= skirtMm) return 1
+    if (dist <= 0) return 0
+    const u = 1 - dist / skirtMm
+    return Math.sqrt(Math.max(0, 1 - u * u))
+  }
+  const reliefFactor = (x: number, y: number) =>
+    roll(halfW - Math.abs(x)) * roll(halfH - Math.abs(y))
+  const surfaceZ = (x: number, y: number, h: number) => {
+    const z = elevMm(h)
+    const factor = reliefFactor(x, y)
+    return baseThicknessMm + (z - baseThicknessMm) * factor
+  }
+
   // Regular grid in local meters — avoids lat/lon re-projection jitter per vertex
   const topCount = cols * rows
   const vertCount = topCount * 2
@@ -163,7 +191,7 @@ export function buildTerrainModel(
       const xm = (u - 0.5) * widthM * scale
       const ym = (v - 0.5) * heightM * scale
       const h = heights[j * cols + i]
-      const zm = elevMm(h)
+      const zm = surfaceZ(xm, ym, h)
       const ti = (j * cols + i) * 3
       positions[ti] = xm
       positions[ti + 1] = ym
@@ -237,7 +265,8 @@ export function buildTerrainModel(
     }
   }
 
-  // Side walls
+  // Short vertical rim: the rolled skirt meets the wall at base thickness
+  // and the wall drops to the flat z=0 base. Same footprint, no gap.
   const wallMat = 0
   for (let i = 0; i < cols - 1; i++) {
     const t0 = i
@@ -261,14 +290,14 @@ export function buildTerrainModel(
   }
 
   // Route — closed rectangular tube (sides + caps, or looped join)
-  const halfW = opts.routeWidthMm / 2
+  const routeHalfW = opts.routeWidthMm / 2
   const routeH = opts.routeHeightMm
   const routeRaw: { x: number; y: number; zTop: number }[] = []
   for (const p of track) {
     const { x, y } = toLocalMeters(p.lat, p.lon, bbox)
     const xm = (x - widthM / 2) * scale
     const ym = (y - heightM / 2) * scale
-    const zTop = elevMm(sampleHeight(height, p.lat, p.lon)) + routeH
+    const zTop = surfaceZ(xm, ym, sampleHeight(height, p.lat, p.lon)) + routeH
     routeRaw.push({ x: xm, y: ym, zTop })
   }
 
@@ -291,7 +320,7 @@ export function buildTerrainModel(
   if (pts.length >= 3) {
     const a = pts[0]
     const b = pts[pts.length - 1]
-    if (Math.hypot(a.x - b.x, a.y - b.y) < Math.max(halfW * 2, 0.8)) {
+    if (Math.hypot(a.x - b.x, a.y - b.y) < Math.max(routeHalfW * 2, 0.8)) {
       pts = pts.slice(0, -1)
       routeClosed = pts.length >= 3
     }
@@ -334,8 +363,8 @@ export function buildTerrainModel(
         dy = 0
         len = 1
       }
-      const nx = (-dy / len) * halfW
-      const ny = (dx / len) * halfW
+      const nx = (-dy / len) * routeHalfW
+      const ny = (dx / len) * routeHalfW
       const zBot = p.zTop - routeH
       rings.push({
         bl: pushV(p.x + nx, p.y + ny, zBot),

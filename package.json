@@ -7,7 +7,8 @@
     "dev": "vite",
     "build": "tsc -b && vite build",
     "lint": "oxlint",
-    "preview": "vite preview"
+    "preview": "vite preview",
+    "validate-3mf": "tsx scripts/generate-sample-3mf.ts /tmp/gpxto3mf-sample.3mf && node scripts/validate-3mf.mjs --self-test /tmp/gpxto3mf-sample.3mf"
   },
   "dependencies": {
     "@netlify/functions": "^6.0.0",
@@ -24,6 +25,7 @@
     "@vitejs/plugin-react": "^6.1.1",
     "oxlint": "^1.81.0",
     "playwright": "^1.49.0",
+    "tsx": "^4.23.15",
     "typescript": "~6.0.2",
     "vite": "^8.3.0"
   }

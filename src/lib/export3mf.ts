@@ -30,8 +30,9 @@ function fmt(n: number): string {
 }
 
 /**
- * Write a Core 3MF + Materials Extension package that Bambu Studio / lib3mf accept.
- * Previous export put basematerials in the core xmlns (invalid) and used 6-digit colors.
+ * Write a core 3MF package that lib3mf (and Bambu Studio) will read.
+ * lib3mf 2.x rejects `<m:basematerials>` (“Invalid Element in namespace”) and
+ * expects `<basematerials>` in the core namespace, with #RRGGBBAA colors.
  */
 export async function export3mf(
   model: TerrainModel,
@@ -92,23 +93,21 @@ export async function export3mf(
       let name = (m.name || `Color ${i + 1}`).trim() || `Color ${i + 1}`
       if (usedNames.has(name)) name = `${name} ${i + 1}`
       usedNames.add(name)
-      return `<m:base name="${esc(name)}" displaycolor="${displayColor(m.hex)}" />`
+      return `<base name="${esc(name)}" displaycolor="${displayColor(m.hex)}" />`
     })
     .join('\n      ')
 
   const safeTitle = esc((title || 'gpxto3mf').slice(0, 120))
 
-  // Materials MUST live in the materials namespace with requiredextensions="m"
   const modelXml = `<?xml version="1.0" encoding="UTF-8"?>
-<model unit="millimeter" xml:lang="en-US" requiredextensions="m"
-  xmlns="http://schemas.microsoft.com/3dmanufacturing/core/2015/02"
-  xmlns:m="http://schemas.microsoft.com/3dmanufacturing/material/2015/02">
+<model unit="millimeter" xml:lang="en-US"
+  xmlns="http://schemas.microsoft.com/3dmanufacturing/core/2015/02">
   <metadata name="Title">${safeTitle}</metadata>
   <metadata name="Application">gpxto3mf</metadata>
   <resources>
-    <m:basematerials id="1">
+    <basematerials id="1">
       ${bases}
-    </m:basematerials>
+    </basematerials>
     <object id="2" type="model" name="${safeTitle}" pid="1" pindex="0">
       <mesh>
         <vertices>
