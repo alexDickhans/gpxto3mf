@@ -1,6 +1,11 @@
 import type { BBox } from './geo'
 import { decodeTileImage } from './tileImage'
 import {
+  fetchSentinelSeasonBlob,
+  type ImagerySeason,
+  type NamedSeason,
+} from './sentinelSeason'
+import {
   prefetchTiles,
   sampleRgbBilinear,
   tileRangeForBBox,
@@ -13,7 +18,11 @@ export type ColorGrid = {
   rows: number
   /** RGB 0–255, 3 * cols * rows */
   rgb: Uint8Array
+  /** Set when the grid came from a chosen season, e.g. "Fall 2025" */
+  label?: string
 }
+
+export type { ImagerySeason }
 
 /** Esri MapServer export often caps around 4096 on a side */
 const MAX_EXPORT_PX = 4096
@@ -32,6 +41,37 @@ function exportQuery(bbox: BBox, w: number, h: number): string {
     f: 'image',
   })
   return params.toString()
+}
+
+function colorGridFromImage(img: ImageData, resolution: number): ColorGrid {
+  const cols = resolution
+  const rows = resolution
+  const rgb = new Uint8Array(cols * rows * 3)
+
+  for (let j = 0; j < rows; j++) {
+    const v = rows === 1 ? 0 : j / (rows - 1) // 0 = south
+    const srcY = (1 - v) * (img.height - 1) // flip: south → bottom of image
+    for (let i = 0; i < cols; i++) {
+      const u = cols === 1 ? 0 : i / (cols - 1)
+      const srcX = u * (img.width - 1)
+      const [r, g, b] = sampleImageBilinear(img, srcX, srcY)
+      const oi = (j * cols + i) * 3
+      rgb[oi] = r
+      rgb[oi + 1] = g
+      rgb[oi + 2] = b
+    }
+  }
+
+  return { cols, rows, rgb }
+}
+
+function assertHasColor(grid: ColorGrid) {
+  let sum = 0
+  const n = grid.cols * grid.rows
+  for (let i = 0; i < n; i++) {
+    sum += grid.rgb[i * 3] + grid.rgb[i * 3 + 1] + grid.rgb[i * 3 + 2]
+  }
+  if (sum / n < 8) throw new Error('Seasonal imagery came back empty')
 }
 
 async function fetchExportBlob(bbox: BBox, w: number, h: number): Promise<Blob> {
@@ -65,27 +105,47 @@ async function fetchColorGridFromExport(
   const blob = await fetchExportBlob(bbox, size, size)
   onProgress?.(`Decoding map image…`)
   const img = await decodeTileImage(blob)
+  return colorGridFromImage(img, resolution)
+}
 
-  const cols = resolution
-  const rows = resolution
-  const rgb = new Uint8Array(cols * rows * 3)
-
-  // If export size === grid, copy with Y flip; else bilinear resample
-  for (let j = 0; j < rows; j++) {
-    const v = rows === 1 ? 0 : j / (rows - 1) // 0 = south
-    const srcY = (1 - v) * (img.height - 1) // flip: south → bottom of image
-    for (let i = 0; i < cols; i++) {
-      const u = cols === 1 ? 0 : i / (cols - 1)
-      const srcX = u * (img.width - 1)
-      const [r, g, b] = sampleImageBilinear(img, srcX, srcY)
-      const oi = (j * cols + i) * 3
-      rgb[oi] = r
-      rgb[oi + 1] = g
-      rgb[oi + 2] = b
+/**
+ * Sentinel-2 natural color for one season. Direct Esri ImageServer first;
+ * same-origin proxy if the browser cannot reach it.
+ */
+async function fetchColorGridFromSeason(
+  bbox: BBox,
+  resolution: number,
+  season: NamedSeason,
+  onProgress?: (msg: string) => void,
+): Promise<ColorGrid> {
+  const size = Math.max(2, Math.min(MAX_EXPORT_PX, resolution))
+  let blob: Blob
+  let label: string | null = null
+  try {
+    const got = await fetchSentinelSeasonBlob(bbox, size, season, onProgress)
+    blob = got.blob
+    label = got.label
+  } catch (err) {
+    console.warn('Direct seasonal imagery failed, trying proxy', err)
+    onProgress?.(`Fetching ${season} imagery…`)
+    const q = new URLSearchParams({
+      season,
+      bbox: `${bbox.minLon},${bbox.minLat},${bbox.maxLon},${bbox.maxLat}`,
+      size: `${size},${size}`,
+    })
+    const res = await fetch(`/api/imagery-export?${q}`)
+    if (!res.ok) {
+      const detail = await res.text().catch(() => '')
+      throw new Error(detail || `Seasonal imagery failed: ${res.status}`)
     }
+    label = res.headers.get('X-Imagery-Label')
+    blob = await res.blob()
   }
-
-  return { cols, rows, rgb }
+  onProgress?.(label ? `${label} · decoding…` : 'Decoding seasonal imagery…')
+  const img = await decodeTileImage(blob)
+  const grid = colorGridFromImage(img, resolution)
+  assertHasColor(grid)
+  return { ...grid, label: label ?? undefined }
 }
 
 function sampleImageBilinear(
@@ -161,7 +221,11 @@ export async function fetchColorGrid(
   resolution: number,
   onProgress?: (msg: string) => void,
   zoom?: { maxZ: number; minZ: number; targetTiles: number },
+  season: ImagerySeason = 'default',
 ): Promise<ColorGrid> {
+  if (season !== 'default') {
+    return fetchColorGridFromSeason(bbox, resolution, season, onProgress)
+  }
   try {
     return await fetchColorGridFromExport(bbox, resolution, onProgress)
   } catch (err) {

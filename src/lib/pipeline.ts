@@ -8,6 +8,7 @@ import {
 } from './palette'
 import { buildTerrainModel, type TerrainModel } from './mesh'
 import { DEFAULTS, DEFAULT_PALETTE, demBudgetForResolution } from './defaults'
+import type { ImagerySeason } from './sentinelSeason'
 
 export type PipelineSettings = {
   exaggeration: number
@@ -19,6 +20,8 @@ export type PipelineSettings = {
   minColorRegionMm: number
   colorEdgeSmooth: number
   routeColorIndex: number | null
+  /** `default` is the Esri mosaic. A season requests Sentinel-2 for those months. */
+  imagerySeason?: ImagerySeason
 }
 
 export type PipelineResult = {
@@ -26,6 +29,8 @@ export type PipelineResult = {
   model: TerrainModel
   palette: Palette
   routeColorIndex: number
+  /** Year-stamped season when one was requested, e.g. "Fall 2025" */
+  imageryLabel?: string
 }
 
 export async function runPipeline(
@@ -42,7 +47,7 @@ export async function runPipeline(
 
   const [height, colors] = await Promise.all([
     fetchHeightGrid(bbox, res, onProgress, demZoom),
-    fetchColorGrid(bbox, res, onProgress),
+    fetchColorGrid(bbox, res, onProgress, undefined, settings.imagerySeason ?? 'default'),
   ])
 
   onProgress?.('Matching palette…')
@@ -62,7 +67,7 @@ export async function runPipeline(
   })
 
   onProgress?.('Ready')
-  return { track, model, palette, routeColorIndex }
+  return { track, model, palette, routeColorIndex, imageryLabel: colors.label }
 }
 
 export { parsePaletteText, DEFAULT_PALETTE, DEFAULTS }

@@ -21,6 +21,8 @@ npm run build   # → dist/
 
 Netlify: `netlify.toml` publishes `dist/` and serves `netlify/functions/tile-proxy.ts` at `/api/dem/*` and `/api/imagery/*` (Terrarium DEM + Esri World Imagery). Local Vite uses the same paths via a middleware proxy in `vite.config.ts`.
 
+**Season** defaults to that Esri mosaic. Spring, summer, fall, and winter request the clearest Sentinel-2 natural-color scene in those months (northern calendar), searching the last few years. The status line names the year that was used, such as Fall 2025.
+
 ## Check a 3MF
 
 ```bash

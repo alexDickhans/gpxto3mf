@@ -1,4 +1,10 @@
 import type { Config, Context } from '@netlify/functions'
+import {
+  fetchSentinelSeasonBlob,
+  isNamedSeason,
+  parseBBoxParam,
+  parseSizeParam,
+} from '../../src/lib/sentinelSeason.ts'
 
 const DEM_BASE = 'https://s3.amazonaws.com/elevation-tiles-prod/terrarium'
 const IMAGERY_BASE =
@@ -60,6 +66,32 @@ export default async (req: Request, _context: Context) => {
 
   // Single-image export for the whole bbox
   if (url.pathname === '/api/imagery-export' || url.pathname.endsWith('/imagery-export')) {
+    const season = url.searchParams.get('season')
+    if (season) {
+      const bbox = parseBBoxParam(url.searchParams.get('bbox') || '')
+      const side = parseSizeParam(url.searchParams.get('size') || '')
+      if (!isNamedSeason(season) || !bbox || side == null) {
+        return new Response('Bad seasonal export params', {
+          status: 400,
+          headers: corsHeaders(),
+        })
+      }
+      try {
+        const got = await fetchSentinelSeasonBlob(bbox, side, season)
+        return new Response(got.blob, {
+          status: 200,
+          headers: corsHeaders({
+            'Content-Type': got.blob.type || 'image/png',
+            'Cache-Control': 'public, max-age=86400',
+            'X-Imagery-Label': got.label,
+          }),
+        })
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : 'fetch failed'
+        return new Response(msg, { status: 502, headers: corsHeaders() })
+      }
+    }
+
     const upstream = exportUpstream(url)
     if (!upstream) {
       return new Response('Bad export params', { status: 400, headers: corsHeaders() })
