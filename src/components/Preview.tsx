@@ -8,10 +8,13 @@ type Props = {
   model: TerrainModel | null
   showNorth: boolean
   showScale: boolean
+  /** Bumped when a new GPX is loaded — the only time the camera reframes. */
+  fitKey?: number
 }
 
-export function Preview({ model, showNorth, showScale }: Props) {
+export function Preview({ model, showNorth, showScale, fitKey = 0 }: Props) {
   const mountRef = useRef<HTMLDivElement>(null)
+  const fittedRef = useRef<number | null>(null)
   const stateRef = useRef<{
     renderer: THREE.WebGLRenderer
     scene: THREE.Scene
@@ -111,23 +114,13 @@ export function Preview({ model, showNorth, showScale }: Props) {
     }
   }, [])
 
+  // Build the replacement off-scene first, then swap. The old mesh stays
+  // visible and orbitable for the whole rebuild instead of blinking out.
   useEffect(() => {
     const st = stateRef.current
     if (!st) return
 
-    while (st.group.children.length) {
-      const c = st.group.children[0]
-      st.group.remove(c)
-      if (c instanceof THREE.Mesh) {
-        c.geometry.dispose()
-        if (Array.isArray(c.material)) c.material.forEach((m) => m.dispose())
-        else c.material.dispose()
-      }
-    }
-    while (st.markers.children.length) {
-      const c = st.markers.children[0]
-      st.markers.remove(c)
-    }
+    const next = new THREE.Group()
 
     if (!model) {
       // Empty plaque placeholder
@@ -139,55 +132,85 @@ export function Preview({ model, showNorth, showScale }: Props) {
       })
       const mesh = new THREE.Mesh(geo, mat)
       mesh.position.z = 2
-      st.group.add(mesh)
+      next.add(mesh)
+    } else {
+      const mats = model.materials.map((m) => {
+        const [r, g, b] = hexToRgb(m.hex)
+        return new THREE.MeshStandardMaterial({
+          color: new THREE.Color(r / 255, g / 255, b / 255),
+          roughness: 0.72,
+          metalness: 0.02,
+          flatShading: true,
+          emissive: new THREE.Color(r / 255, g / 255, b / 255),
+          emissiveIntensity: 0.08,
+        })
+      })
+
+      // Split by material for Three.js multi-material
+      const groups: number[][] = model.materials.map(() => [])
+      for (let t = 0; t < model.triMaterials.length; t++) {
+        const mi = model.triMaterials[t]
+        const i0 = t * 3
+        groups[mi].push(
+          model.indices[i0],
+          model.indices[i0 + 1],
+          model.indices[i0 + 2],
+        )
+      }
+
+      groups.forEach((idx, mi) => {
+        if (idx.length === 0) return
+        const geo = new THREE.BufferGeometry()
+        geo.setAttribute(
+          'position',
+          new THREE.BufferAttribute(model.positions, 3),
+        )
+        geo.setIndex(idx)
+        geo.computeVertexNormals()
+        next.add(new THREE.Mesh(geo, mats[mi]))
+      })
+    }
+
+    while (st.group.children.length) {
+      const c = st.group.children[0]
+      st.group.remove(c)
+      if (c instanceof THREE.Mesh) {
+        c.geometry.dispose()
+        if (Array.isArray(c.material)) c.material.forEach((m) => m.dispose())
+        else c.material.dispose()
+      }
+    }
+    for (const child of [...next.children]) st.group.add(child)
+
+    // Reframe only for the first model or a new GPX — a remesh must not throw
+    // away the orbit the user set up.
+    if (fittedRef.current === fitKey) return
+    fittedRef.current = fitKey
+    if (!model) {
       st.camera.position.set(90, -120, 80)
       st.controls.target.set(0, 0, 8)
       return
     }
-
-    const mats = model.materials.map((m) => {
-      const [r, g, b] = hexToRgb(m.hex)
-      return new THREE.MeshStandardMaterial({
-        color: new THREE.Color(r / 255, g / 255, b / 255),
-        roughness: 0.72,
-        metalness: 0.02,
-        flatShading: true,
-        emissive: new THREE.Color(r / 255, g / 255, b / 255),
-        emissiveIntensity: 0.08,
-      })
-    })
-
-    // Split by material for Three.js multi-material
-    const groups: number[][] = model.materials.map(() => [])
-    for (let t = 0; t < model.triMaterials.length; t++) {
-      const mi = model.triMaterials[t]
-      const i0 = t * 3
-      groups[mi].push(
-        model.indices[i0],
-        model.indices[i0 + 1],
-        model.indices[i0 + 2],
-      )
-    }
-
-    groups.forEach((idx, mi) => {
-      if (idx.length === 0) return
-      const geo = new THREE.BufferGeometry()
-      geo.setAttribute(
-        'position',
-        new THREE.BufferAttribute(model.positions, 3),
-      )
-      geo.setIndex(idx)
-      geo.computeVertexNormals()
-      const mesh = new THREE.Mesh(geo, mats[mi])
-      st.group.add(mesh)
-    })
-
-    const cx = model.extentMm.x
-    const cy = model.extentMm.y
-    const cz = model.extentMm.z
-    const dist = Math.max(cx, cy) * 1.35
+    const dist = Math.max(model.extentMm.x, model.extentMm.y) * 1.35
     st.camera.position.set(dist * 0.55, -dist * 0.85, dist * 0.55)
-    st.controls.target.set(0, 0, cz * 0.35)
+    st.controls.target.set(0, 0, model.extentMm.z * 0.35)
+  }, [model, fitKey])
+
+  const cx = model?.extentMm.x ?? 0
+  const cy = model?.extentMm.y ?? 0
+  const cz = model?.extentMm.z ?? 0
+
+  // Overlays are their own effect so toggling them never rebuilds terrain.
+  useEffect(() => {
+    const st = stateRef.current
+    if (!st) return
+
+    while (st.markers.children.length) {
+      const c = st.markers.children[0]
+      st.markers.remove(c)
+      if (c instanceof THREE.Mesh) c.geometry.dispose()
+    }
+    if (!cx && !cy) return
 
     if (showNorth) {
       const northY = cy / 2 + 8
@@ -234,7 +257,7 @@ export function Preview({ model, showNorth, showScale }: Props) {
         st.markers.add(tick)
       }
     }
-  }, [model, showNorth, showScale])
+  }, [cx, cy, cz, showNorth, showScale])
 
   return <div className="preview-mount" ref={mountRef} aria-label="3D preview" />
 }

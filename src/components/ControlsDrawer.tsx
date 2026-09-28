@@ -1,7 +1,12 @@
 import {
+  BASE_THICKNESS_MIN_MM,
+  COLOR_MODES,
   DEFAULTS,
+  estimateTriangleCount,
   FETCH_RESOLUTION_MAX,
   FETCH_RESOLUTION_MIN,
+  MESH_RESOLUTION_PREVIEW_MAX,
+  type ColorMode,
 } from '../lib/defaults'
 import { IMAGERY_SEASONS, type ImagerySeason } from '../lib/sentinelSeason'
 
@@ -14,9 +19,16 @@ export type ControlValues = {
   fetchResolution: number
   minColorRegionMm: number
   colorEdgeSmooth: number
+  baseThicknessMm: number
+  colorShellMm: number
+  colorMode: ColorMode
   showNorth: boolean
   showScale: boolean
   imagerySeason: ImagerySeason
+}
+
+function triangleNote(n: number): string {
+  return n >= 1e6 ? `${(n / 1e6).toFixed(1)}M` : `${Math.round(n / 1000)}k`
 }
 
 type Props = {
@@ -40,6 +52,13 @@ export function ControlsDrawer({
 }: Props) {
   const set = <K extends keyof ControlValues>(key: K, val: ControlValues[K]) =>
     onChange({ ...values, [key]: val })
+
+  const previewRes = Math.min(values.fetchResolution, MESH_RESOLUTION_PREVIEW_MAX)
+  const previewTris = estimateTriangleCount(previewRes, values.colorShellMm)
+  const exportTris = estimateTriangleCount(
+    values.fetchResolution,
+    values.colorShellMm,
+  )
 
   return (
     <aside className={`drawer ${open ? 'open' : ''}`} aria-hidden={!open}>
@@ -70,6 +89,26 @@ export function ControlsDrawer({
 
       <label className="field">
         <span>
+          Terrain colors
+          <em className="field-sub">
+            {' '}
+            {COLOR_MODES.find((m) => m.id === values.colorMode)?.hint}
+          </em>
+        </span>
+        <select
+          value={values.colorMode}
+          onChange={(e) => set('colorMode', e.target.value as ColorMode)}
+        >
+          {COLOR_MODES.map((mode) => (
+            <option key={mode.id} value={mode.id}>
+              {mode.label}
+            </option>
+          ))}
+        </select>
+      </label>
+
+      <label className="field">
+        <span>
           Fetch resolution · {values.fetchResolution}²
           <em className="field-sub">
             {' '}
@@ -84,6 +123,15 @@ export function ControlsDrawer({
           value={values.fetchResolution}
           onChange={(e) => set('fetchResolution', parseInt(e.target.value, 10))}
         />
+        <em className="field-sub">
+          Preview meshes at {previewRes}² (~{triangleNote(previewTris)} tris);
+          the 3MF exports at {values.fetchResolution}² (~
+          {triangleNote(exportTris)} tris).
+          {exportTris > 3e6
+            ? ' That export is heavy — Bambu Studio may refuse it.'
+            : ''}{' '}
+          Changing this needs a refetch: press Rebuild topo.
+        </em>
       </label>
 
       <label className="field">
@@ -115,6 +163,40 @@ export function ControlsDrawer({
           onChange={(e) =>
             set('colorEdgeSmooth', parseInt(e.target.value, 10) / 100)
           }
+        />
+      </label>
+
+      <label className="field">
+        <span>
+          Color shell · {values.colorShellMm.toFixed(1)} mm
+          <em className="field-sub">
+            {values.colorShellMm > 0.05
+              ? ' (only the top layers swap filament)'
+              : ' (0 = every color runs floor to summit)'}
+          </em>
+        </span>
+        <input
+          type="range"
+          min={0}
+          max={4}
+          step={0.2}
+          value={values.colorShellMm}
+          onChange={(e) => set('colorShellMm', parseFloat(e.target.value))}
+        />
+      </label>
+
+      <label className="field">
+        <span>
+          Base thickness · {values.baseThicknessMm.toFixed(1)} mm
+          <em className="field-sub"> (single-color slab under the shell)</em>
+        </span>
+        <input
+          type="range"
+          min={BASE_THICKNESS_MIN_MM}
+          max={6}
+          step={0.2}
+          value={values.baseThicknessMm}
+          onChange={(e) => set('baseThicknessMm', parseFloat(e.target.value))}
         />
       </label>
 
@@ -216,6 +298,9 @@ export function ControlsDrawer({
             fetchResolution: DEFAULTS.fetchResolution,
             minColorRegionMm: DEFAULTS.minColorRegionMm,
             colorEdgeSmooth: DEFAULTS.colorEdgeSmooth,
+            baseThicknessMm: DEFAULTS.baseThicknessMm,
+            colorShellMm: DEFAULTS.colorShellMm,
+            colorMode: DEFAULTS.colorMode,
             showNorth: DEFAULTS.showNorth,
             showScale: DEFAULTS.showScale,
             imagerySeason: DEFAULTS.imagerySeason,

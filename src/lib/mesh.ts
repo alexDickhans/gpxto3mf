@@ -3,11 +3,13 @@ import type { ColorGrid } from './imagery'
 import {
   enabledColorIndices,
   hexToLab,
-  nearestPaletteIndex,
+  nearestLabIndex,
+  rgbToLab,
   type Palette,
 } from './palette'
 import { toLocalMeters, type LatLon } from './geo'
 import { smoothCellMaterials, smoothColorBoundary } from './colorSmooth'
+import type { ColorMode } from './defaults'
 
 export type Vec3 = { x: number; y: number; z: number }
 
@@ -24,6 +26,10 @@ export type TerrainModel = {
   extentMm: { x: number; y: number; z: number }
   scaleMmPerM: number
   northAngle: number
+  /** Signed volume of every solid, mm³ (solid — before slicer infill) */
+  volumeMm3: number
+  /** Samples on a side actually meshed (grids may be denser) */
+  meshResolution: number
 }
 
 export type BuildOptions = {
@@ -37,8 +43,100 @@ export type BuildOptions = {
   /** 0 keeps pixel edges, 1 rounds color borders into smooth contours */
   colorEdgeSmooth?: number
   baseThicknessMm?: number
+  /**
+   * Depth of the per-color shell in mm. Below it the model is one solid in the
+   * dominant color, so AMS swaps are confined to the top layers. 0 = color the
+   * full depth (one closed solid per color, floor to summit).
+   */
+  colorShellMm?: number
+  /** How cell colors are chosen (imagery hue, elevation bands, or a mix) */
+  colorMode?: ColorMode
+  /** Mesh at most this many samples on a side; grids are resampled down to it. */
+  meshResolution?: number
   /** Inset distance over which the top surface rolls down to the base. */
   skirtMm?: number
+}
+
+/**
+ * Box-average index ranges mapping a `target`-sample axis onto a `src`-sample
+ * axis. Averaging (not point sampling) keeps a 4096² fetch from aliasing into
+ * a 384² preview mesh.
+ */
+function boxRanges(src: number, target: number): Int32Array {
+  const ranges = new Int32Array(target * 2)
+  const step = (src - 1) / Math.max(1, target - 1)
+  const half = step / 2
+  for (let i = 0; i < target; i++) {
+    const center = i * step
+    ranges[i * 2] = Math.max(0, Math.round(center - half))
+    ranges[i * 2 + 1] = Math.min(src - 1, Math.round(center + half))
+  }
+  return ranges
+}
+
+export function resampleHeightGrid(grid: HeightGrid, n: number): HeightGrid {
+  if (n >= grid.cols || n >= grid.rows || n < 2) return grid
+  const xs = boxRanges(grid.cols, n)
+  const ys = boxRanges(grid.rows, n)
+  const heights = new Float32Array(n * n)
+  let minH = Infinity
+  let maxH = -Infinity
+  for (let j = 0; j < n; j++) {
+    const j0 = ys[j * 2]
+    const j1 = ys[j * 2 + 1]
+    for (let i = 0; i < n; i++) {
+      const i0 = xs[i * 2]
+      const i1 = xs[i * 2 + 1]
+      let sum = 0
+      let count = 0
+      for (let jj = j0; jj <= j1; jj++) {
+        const row = jj * grid.cols
+        for (let ii = i0; ii <= i1; ii++) {
+          sum += grid.heights[row + ii]
+          count++
+        }
+      }
+      const h = count > 0 ? sum / count : 0
+      heights[j * n + i] = h
+      if (h < minH) minH = h
+      if (h > maxH) maxH = h
+    }
+  }
+  return { ...grid, cols: n, rows: n, heights, minH, maxH }
+}
+
+export function resampleColorGrid(grid: ColorGrid, n: number): ColorGrid {
+  if (n >= grid.cols || n >= grid.rows || n < 2) return grid
+  const xs = boxRanges(grid.cols, n)
+  const ys = boxRanges(grid.rows, n)
+  const rgb = new Uint8Array(n * n * 3)
+  for (let j = 0; j < n; j++) {
+    const j0 = ys[j * 2]
+    const j1 = ys[j * 2 + 1]
+    for (let i = 0; i < n; i++) {
+      const i0 = xs[i * 2]
+      const i1 = xs[i * 2 + 1]
+      let r = 0
+      let g = 0
+      let b = 0
+      let count = 0
+      for (let jj = j0; jj <= j1; jj++) {
+        const row = jj * grid.cols
+        for (let ii = i0; ii <= i1; ii++) {
+          const o = (row + ii) * 3
+          r += grid.rgb[o]
+          g += grid.rgb[o + 1]
+          b += grid.rgb[o + 2]
+          count++
+        }
+      }
+      const o = (j * n + i) * 3
+      rgb[o] = r / count
+      rgb[o + 1] = g / count
+      rgb[o + 2] = b / count
+    }
+  }
+  return { ...grid, cols: n, rows: n, rgb }
 }
 
 /** Sample color grid onto mesh resolution (handles mismatched fetch sizes). */
@@ -72,47 +170,127 @@ function sampleColorAt(
   return out
 }
 
+/** Elevation quantile band (0 … bandCount-1) for every cell, via a histogram. */
+function elevationBands(
+  cellHeights: Float32Array,
+  bandCount: number,
+): Uint8Array {
+  const bands = new Uint8Array(cellHeights.length)
+  if (bandCount <= 1 || cellHeights.length === 0) return bands
+  let minH = Infinity
+  let maxH = -Infinity
+  for (let k = 0; k < cellHeights.length; k++) {
+    const h = cellHeights[k]
+    if (h < minH) minH = h
+    if (h > maxH) maxH = h
+  }
+  const span = maxH - minH
+  if (!(span > 1e-6)) return bands
+
+  const BINS = 2048
+  const hist = new Int32Array(BINS)
+  const binOf = (h: number) =>
+    Math.max(0, Math.min(BINS - 1, ((h - minH) / span) * (BINS - 1)) | 0)
+  for (let k = 0; k < cellHeights.length; k++) hist[binOf(cellHeights[k])]++
+
+  const perBand = cellHeights.length / bandCount
+  const binBand = new Uint8Array(BINS)
+  let acc = 0
+  for (let b = 0; b < BINS; b++) {
+    const mid = acc + hist[b] / 2
+    binBand[b] = Math.min(bandCount - 1, Math.floor(mid / perBand))
+    acc += hist[b]
+  }
+  for (let k = 0; k < cellHeights.length; k++) {
+    bands[k] = binBand[binOf(cellHeights[k])]
+  }
+  return bands
+}
+
 export function buildTerrainModel(
-  height: HeightGrid,
-  colors: ColorGrid,
+  heightGrid: HeightGrid,
+  colorGrid: ColorGrid,
   palette: Palette,
   track: LatLon[],
   opts: BuildOptions,
 ): TerrainModel {
-  const baseThicknessMm = opts.baseThicknessMm ?? 2.5
+  const baseThicknessMm = Math.max(0.6, opts.baseThicknessMm ?? 1.6)
+  const meshRes = opts.meshResolution ?? 0
+  const height =
+    meshRes >= 8 ? resampleHeightGrid(heightGrid, meshRes) : heightGrid
+  const colors =
+    meshRes >= 8 ? resampleColorGrid(colorGrid, meshRes) : colorGrid
   const { cols, rows, heights, widthM, heightM, minH, bbox } = height
 
   const longestM = Math.max(widthM, heightM)
   const scale = opts.bedSizeMm / longestM // mm per meter of ground
 
-  const activeIdxs = enabledColorIndices(palette)
+  const activeIdxs = enabledColorIndices(palette, opts.routeColorIndex)
   const paletteLabs = activeIdxs.map((i) => hexToLab(palette.colors[i].hex))
+  const colorMode: ColorMode = opts.colorMode ?? 'blend'
 
   // Cell material from colors resampled onto this mesh grid
   const cellW = cols - 1
   const cellH = rows - 1
+  const cellHeights = new Float32Array(cellW * cellH)
+  for (let j = 0; j < cellH; j++) {
+    for (let i = 0; i < cellW; i++) {
+      cellHeights[j * cellW + i] =
+        (heights[j * cols + i] +
+          heights[j * cols + i + 1] +
+          heights[(j + 1) * cols + i] +
+          heights[(j + 1) * cols + i + 1]) /
+        4
+    }
+  }
+
+  // Low → high maps onto dark → light so the bands read as relief whatever
+  // hues the palette holds.
+  const bandOrder = paletteLabs
+    .map((_, i) => i)
+    .sort((a, b) => paletteLabs[a][0] - paletteLabs[b][0])
+  const bands =
+    colorMode === 'imagery'
+      ? null
+      : elevationBands(cellHeights, paletteLabs.length)
+  const BLEND_W = 0.45
+
   let cellMat = new Uint16Array(cellW * cellH)
   for (let j = 0; j < cellH; j++) {
     for (let i = 0; i < cellW; i++) {
-      const samples = [
-        [i, j],
-        [i + 1, j],
-        [i, j + 1],
-        [i + 1, j + 1],
-      ] as const
-      let r = 0
-      let g = 0
-      let b = 0
-      for (const [ci, cj] of samples) {
-        const u = cols <= 1 ? 0 : ci / (cols - 1)
-        const v = rows <= 1 ? 0 : cj / (rows - 1)
-        const c = sampleColorAt(colors, u, v)
-        r += c[0]
-        g += c[1]
-        b += c[2]
+      const k = j * cellW + i
+      const band = bands ? bandOrder[bands[k]] : -1
+      let local: number
+      if (colorMode === 'elevation') {
+        local = band
+      } else {
+        const samples = [
+          [i, j],
+          [i + 1, j],
+          [i, j + 1],
+          [i + 1, j + 1],
+        ] as const
+        let r = 0
+        let g = 0
+        let b = 0
+        for (const [ci, cj] of samples) {
+          const u = cols <= 1 ? 0 : ci / (cols - 1)
+          const v = rows <= 1 ? 0 : cj / (rows - 1)
+          const c = sampleColorAt(colors, u, v)
+          r += c[0]
+          g += c[1]
+          b += c[2]
+        }
+        const lab = rgbToLab(r / 4, g / 4, b / 4)
+        if (band >= 0) {
+          const bandLab = paletteLabs[band]
+          lab[0] += (bandLab[0] - lab[0]) * BLEND_W
+          lab[1] += (bandLab[1] - lab[1]) * BLEND_W
+          lab[2] += (bandLab[2] - lab[2]) * BLEND_W
+        }
+        local = nearestLabIndex(lab, paletteLabs)
       }
-      const local = nearestPaletteIndex([r / 4, g / 4, b / 4], paletteLabs)
-      cellMat[j * cellW + i] = activeIdxs[local]
+      cellMat[k] = activeIdxs[local]
     }
   }
 
@@ -127,15 +305,26 @@ export function buildTerrainModel(
     ),
   )
 
-  const usedTerrain = new Set<number>()
-  for (const m of cellMat) usedTerrain.add(m)
+  const terrainCounts = new Map<number, number>()
+  for (const m of cellMat) terrainCounts.set(m, (terrainCounts.get(m) ?? 0) + 1)
 
   const materials: { name: string; hex: string }[] = []
   const terrainToMat = new Map<number, number>()
-  for (const idx of [...usedTerrain].sort((a, b) => a - b)) {
+  for (const idx of [...terrainCounts.keys()].sort((a, b) => a - b)) {
     terrainToMat.set(idx, materials.length)
     const { name, hex } = palette.colors[idx]
     materials.push({ name, hex })
+  }
+
+  // The single-color slab under the shell takes whichever color covers the
+  // most ground, so the shell is the only thing that forces a filament swap.
+  let baseTerrainIdx = cellMat[0] ?? 0
+  let baseTerrainCount = -1
+  for (const [idx, n] of terrainCounts) {
+    if (n > baseTerrainCount) {
+      baseTerrainCount = n
+      baseTerrainIdx = idx
+    }
   }
 
   const routePalIdx = Math.max(
@@ -180,6 +369,15 @@ export function buildTerrainModel(
     return baseThicknessMm + (z - baseThicknessMm) * factor
   }
 
+  /**
+   * Colored shell over a single-color slab. Each cell's color solid only
+   * spans [shellBottom, surface]; everything below belongs to one base solid,
+   * so the AMS swaps filament in the top millimetre instead of every layer.
+   */
+  const shellMm = Math.max(0, opts.colorShellMm ?? 0)
+  const shellEnabled = shellMm > 0.05
+  const shellFloorZ = Math.max(0.3, Math.min(0.8, baseThicknessMm * 0.4))
+
   // Regular grid in local meters — avoids lat/lon re-projection jitter per vertex
   const topCount = cols * rows
   const vertCount = topCount * 2
@@ -200,25 +398,47 @@ export function buildTerrainModel(
       const bi = (topCount + j * cols + i) * 3
       positions[bi] = xm
       positions[bi + 1] = ym
-      positions[bi + 2] = 0
+      positions[bi + 2] = shellEnabled ? Math.max(shellFloorZ, zm - shellMm) : 0
     }
   }
 
-  // Expandable vertex buffer (terrain first, route appended)
-  const posList = Array.from(positions)
-  const indices: number[] = []
-  const triMaterials: number[] = []
+  // Expandable typed buffers (terrain first, base slab and route appended)
+  const cellCount = Math.max(1, cellW * cellH)
+  let posArr = new Float32Array(Math.max(vertCount * 3 * 2, 3072))
+  posArr.set(positions)
+  let posLen = positions.length
+  let idxArr = new Uint32Array(Math.max(cellCount * 18, 3072))
+  let idxLen = 0
+  let matArr = new Uint16Array(Math.max(cellCount * 6, 1024))
+  let matLen = 0
+
+  const growPos = (need: number) => {
+    let cap = posArr.length
+    while (cap < posLen + need) cap *= 2
+    const next = new Float32Array(cap)
+    next.set(posArr.subarray(0, posLen))
+    posArr = next
+  }
+
+  const growTris = () => {
+    const nextIdx = new Uint32Array(idxArr.length * 2)
+    nextIdx.set(idxArr)
+    idxArr = nextIdx
+    const nextMat = new Uint16Array(matArr.length * 2)
+    nextMat.set(matArr)
+    matArr = nextMat
+  }
 
   const addTri = (a: number, b: number, c: number, mat: number) => {
-    const ax = posList[a * 3]
-    const ay = posList[a * 3 + 1]
-    const az = posList[a * 3 + 2]
-    const bx = posList[b * 3]
-    const by = posList[b * 3 + 1]
-    const bz = posList[b * 3 + 2]
-    const cx = posList[c * 3]
-    const cy = posList[c * 3 + 1]
-    const cz = posList[c * 3 + 2]
+    const ax = posArr[a * 3]
+    const ay = posArr[a * 3 + 1]
+    const az = posArr[a * 3 + 2]
+    const bx = posArr[b * 3]
+    const by = posArr[b * 3 + 1]
+    const bz = posArr[b * 3 + 2]
+    const cx = posArr[c * 3]
+    const cy = posArr[c * 3 + 1]
+    const cz = posArr[c * 3 + 2]
     if (![ax, ay, az, bx, by, bz, cx, cy, cz].every(Number.isFinite)) return
     const abx = bx - ax
     const aby = by - ay
@@ -230,13 +450,19 @@ export function buildTerrainModel(
     const ny = abz * acx - abx * acz
     const nz = abx * acy - aby * acx
     if (nx * nx + ny * ny + nz * nz < 1e-12) return
-    indices.push(a, b, c)
-    triMaterials.push(mat)
+    if (idxLen + 3 > idxArr.length || matLen + 1 > matArr.length) growTris()
+    idxArr[idxLen++] = a
+    idxArr[idxLen++] = b
+    idxArr[idxLen++] = c
+    matArr[matLen++] = mat
   }
 
   const pushV = (x: number, y: number, z: number) => {
-    const i = posList.length / 3
-    posList.push(x, y, z)
+    if (posLen + 3 > posArr.length) growPos(3)
+    const i = posLen / 3
+    posArr[posLen++] = x
+    posArr[posLen++] = y
+    posArr[posLen++] = z
     return i
   }
 
@@ -298,7 +524,7 @@ export function buildTerrainModel(
     if (found !== undefined) return found
     const column = gridIndex >= topCount ? gridIndex - topCount : gridIndex
     const o = gridIndex * 3
-    const id = pushV(smoothX[column], smoothY[column], posList[o + 2])
+    const id = pushV(smoothX[column], smoothY[column], posArr[o + 2])
     vertOf.set(key, id)
     return id
   }
@@ -338,6 +564,53 @@ export function buildTerrainModel(
       if (!sameColor(i, j, i + 1, j)) wall(b, d, bB, dB)
       if (!sameColor(i, j, i, j + 1)) wall(d, c, dB, cB)
       if (!sameColor(i, j, i - 1, j)) wall(c, a, cB, aB)
+    }
+  }
+
+  // Base slab: one closed solid in the dominant color from z=0 up to the
+  // shell underside. Its top matches the shell bottom vertex-for-vertex; the
+  // flat underside is a fan from the center so it costs ~1 triangle per rim
+  // vertex instead of two per cell.
+  if (shellEnabled && cols > 1 && rows > 1) {
+    const baseMat = terrainToMat.get(baseTerrainIdx) ?? 0
+    const baseTopV = new Int32Array(topCount)
+    for (let vi = 0; vi < topCount; vi++) {
+      baseTopV[vi] = pushV(
+        smoothX[vi],
+        smoothY[vi],
+        posArr[(topCount + vi) * 3 + 2],
+      )
+    }
+
+    for (let j = 0; j < cellH; j++) {
+      for (let i = 0; i < cellW; i++) {
+        const a = baseTopV[topOf(i, j)]
+        const b = baseTopV[topOf(i + 1, j)]
+        const c = baseTopV[topOf(i, j + 1)]
+        const d = baseTopV[topOf(i + 1, j + 1)]
+        addTri(a, b, d, baseMat)
+        addTri(a, d, c, baseMat)
+      }
+    }
+
+    // Rim walk with the interior on the left so wall() faces outward.
+    const rim: number[] = []
+    for (let i = 0; i < cols; i++) rim.push(topOf(i, 0))
+    for (let j = 1; j < rows; j++) rim.push(topOf(cols - 1, j))
+    for (let i = cols - 2; i >= 0; i--) rim.push(topOf(i, rows - 1))
+    for (let j = rows - 2; j >= 1; j--) rim.push(topOf(0, j))
+
+    const rimBottom = rim.map((vi) => pushV(smoothX[vi], smoothY[vi], 0))
+    const centerV = pushV(0, 0, 0)
+    for (let k = 0; k < rim.length; k++) {
+      const k1 = (k + 1) % rim.length
+      const t0 = baseTopV[rim[k]]
+      const t1 = baseTopV[rim[k1]]
+      const b0 = rimBottom[k]
+      const b1 = rimBottom[k1]
+      addTri(t0, b0, b1, baseMat)
+      addTri(t0, b1, t1, baseMat)
+      addTri(centerV, b1, b0, baseMat)
     }
   }
 
@@ -456,9 +729,10 @@ export function buildTerrainModel(
   }
 
   const usageCounts = materials.map(() => 0)
-  for (const tm of triMaterials) usageCounts[tm]++
+  for (let t = 0; t < matLen; t++) usageCounts[matArr[t]]++
 
-  const finalPositions = new Float32Array(posList)
+  const finalPositions = posArr.slice(0, posLen)
+  const finalIndices = idxArr.slice(0, idxLen)
   let minX = Infinity
   let maxX = -Infinity
   let minY = Infinity
@@ -474,15 +748,34 @@ export function buildTerrainModel(
     maxZ = Math.max(maxZ, finalPositions[i + 2])
   }
 
+  let volume6 = 0
+  for (let t = 0; t < finalIndices.length; t += 3) {
+    const a = finalIndices[t] * 3
+    const b = finalIndices[t + 1] * 3
+    const c = finalIndices[t + 2] * 3
+    volume6 +=
+      finalPositions[a] *
+        (finalPositions[b + 1] * finalPositions[c + 2] -
+          finalPositions[b + 2] * finalPositions[c + 1]) -
+      finalPositions[a + 1] *
+        (finalPositions[b] * finalPositions[c + 2] -
+          finalPositions[b + 2] * finalPositions[c]) +
+      finalPositions[a + 2] *
+        (finalPositions[b] * finalPositions[c + 1] -
+          finalPositions[b + 1] * finalPositions[c])
+  }
+
   return {
     positions: finalPositions,
-    indices: new Uint32Array(indices),
-    triMaterials: new Uint16Array(triMaterials),
+    indices: finalIndices,
+    triMaterials: matArr.slice(0, matLen),
     materials,
     usageCounts,
     extentMm: { x: maxX - minX, y: maxY - minY, z: maxZ - minZ },
     scaleMmPerM: scale,
     northAngle: 0,
+    volumeMm3: Math.abs(volume6) / 6,
+    meshResolution: cols,
   }
 }
 

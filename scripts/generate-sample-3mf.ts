@@ -107,8 +107,11 @@ async function main() {
     routeColorIndex: DEFAULT_PALETTE.colors.findIndex((c) => /route/i.test(c.name)),
     minColorRegionMm: DEFAULTS.minColorRegionMm,
     colorEdgeSmooth: DEFAULTS.colorEdgeSmooth,
+    baseThicknessMm: DEFAULTS.baseThicknessMm,
+    colorShellMm: DEFAULTS.colorShellMm,
+    colorMode: DEFAULTS.colorMode,
   })
-  const base = 2.5
+  const base = DEFAULTS.baseThicknessMm
   const halfW = (widthM * model.scaleMmPerM) / 2
   const halfH = (heightM * model.scaleMmPerM) / 2
   const pos = model.positions
@@ -139,7 +142,7 @@ async function main() {
   const buf = Buffer.from(await blob.arrayBuffer())
   writeFileSync(outPath, buf)
   console.log(
-    `wrote ${outPath} bytes=${buf.length} vertices=${model.positions.length / 3} tris=${model.indices.length / 3} materials=${model.materials.length}`,
+    `wrote ${outPath} bytes=${buf.length} vertices=${model.positions.length / 3} tris=${model.indices.length / 3} materials=${model.materials.length} volume_cm3=${(model.volumeMm3 / 1000).toFixed(1)}`,
   )
 }
 

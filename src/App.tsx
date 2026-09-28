@@ -1,21 +1,28 @@
-import { useCallback, useRef, useState, startTransition } from 'react'
+import { useCallback, useEffect, useRef, useState, startTransition } from 'react'
 import { Preview } from './components/Preview'
 import { PaletteStrip } from './components/PaletteStrip'
 import { ControlsDrawer, type ControlValues } from './components/ControlsDrawer'
 import {
   DEFAULT_PALETTE,
   DEFAULTS,
+  fetchTerrainGrids,
+  gridsCacheKey,
+  meshBuildOptions,
   parsePaletteText,
-  runPipeline,
+  type FetchSettings,
+  type MeshSettings,
   type Palette,
+  type TerrainGrids,
   type TerrainModel,
 } from './lib/pipeline'
 import {
   FETCH_RESOLUTION_MAX,
   FETCH_RESOLUTION_MIN,
+  MESH_RESOLUTION_PREVIEW_MAX,
 } from './lib/defaults'
 import { IMAGERY_SEASONS, type ImagerySeason } from './lib/sentinelSeason'
-import { setColorEnabled } from './lib/palette'
+import { pickRouteColorIndex, setColorEnabled } from './lib/palette'
+import { buildMesh } from './lib/meshClient'
 import { downloadBlob, export3mf } from './lib/export3mf'
 import './App.css'
 
@@ -28,9 +35,88 @@ const initialControls: ControlValues = {
   fetchResolution: DEFAULTS.fetchResolution,
   minColorRegionMm: DEFAULTS.minColorRegionMm,
   colorEdgeSmooth: DEFAULTS.colorEdgeSmooth,
+  baseThicknessMm: DEFAULTS.baseThicknessMm,
+  colorShellMm: DEFAULTS.colorShellMm,
+  colorMode: DEFAULTS.colorMode,
   showNorth: DEFAULTS.showNorth,
   showScale: DEFAULTS.showScale,
   imagerySeason: DEFAULTS.imagerySeason,
+}
+
+/** Settings that decide which pixels are downloaded — changing these refetches. */
+function fetchSettingsOf(c: ControlValues): FetchSettings {
+  return {
+    bboxPadPercent: c.bboxPadPercent,
+    fetchResolution: c.fetchResolution,
+    imagerySeason: c.imagerySeason,
+  }
+}
+
+function meshSettingsOf(
+  c: ControlValues,
+  routeColorIndex: number,
+  meshResolution: number,
+): MeshSettings {
+  return {
+    exaggeration: c.exaggeration,
+    bedSizeMm: c.bedSizeMm,
+    routeHeightMm: c.routeHeightMm,
+    routeWidthMm: c.routeWidthMm,
+    minColorRegionMm: c.minColorRegionMm,
+    colorEdgeSmooth: c.colorEdgeSmooth,
+    routeColorIndex,
+    baseThicknessMm: c.baseThicknessMm,
+    colorShellMm: c.colorShellMm,
+    colorMode: c.colorMode,
+    meshResolution,
+  }
+}
+
+/** True when the two control sets need a new download rather than a remesh. */
+function needsRefetch(a: ControlValues, b: ControlValues): boolean {
+  return (
+    a.bboxPadPercent !== b.bboxPadPercent ||
+    a.fetchResolution !== b.fetchResolution ||
+    a.imagerySeason !== b.imagerySeason
+  )
+}
+
+/** Settings that reshape the mesh from grids already in memory. */
+function needsRemesh(a: ControlValues, b: ControlValues): boolean {
+  return (
+    a.exaggeration !== b.exaggeration ||
+    a.bedSizeMm !== b.bedSizeMm ||
+    a.routeHeightMm !== b.routeHeightMm ||
+    a.routeWidthMm !== b.routeWidthMm ||
+    a.minColorRegionMm !== b.minColorRegionMm ||
+    a.colorEdgeSmooth !== b.colorEdgeSmooth ||
+    a.baseThicknessMm !== b.baseThicknessMm ||
+    a.colorShellMm !== b.colorShellMm ||
+    a.colorMode !== b.colorMode
+  )
+}
+
+const PLA_G_PER_CM3 = 1.24
+
+function describeModel(
+  name: string,
+  model: TerrainModel,
+  fetchResolution: number,
+  imageryLabel?: string,
+): string {
+  const cm3 = model.volumeMm3 / 1000
+  const grams = cm3 * PLA_G_PER_CM3
+  const season = imageryLabel ? ` · ${imageryLabel}` : ''
+  const preview =
+    model.meshResolution < fetchResolution
+      ? ` · preview ${model.meshResolution}², exports at ${fetchResolution}²`
+      : ''
+  return (
+    `${name} · ${model.materials.length} AMS colors · ` +
+    `${model.extentMm.x.toFixed(0)}×${model.extentMm.y.toFixed(0)} mm · ` +
+    `~${cm3.toFixed(0)} cm³ (${grams.toFixed(0)} g PLA if printed solid)` +
+    `${season}${preview}`
+  )
 }
 
 function App() {
@@ -44,9 +130,21 @@ function App() {
   const [status, setStatus] = useState('Upload a GPX to raise a topo')
   const [busy, setBusy] = useState(false)
   const [trackName, setTrackName] = useState<string | null>(null)
+  const [fitKey, setFitKey] = useState(0)
   const gpxTextRef = useRef<string | null>(null)
+  const gridsRef = useRef<{ key: string; grids: TerrainGrids } | null>(null)
+  /** Results from anything older than this id are dropped. */
+  const buildIdRef = useRef(0)
+  const debounceRef = useRef<number | null>(null)
   const gpxInputRef = useRef<HTMLInputElement>(null)
   const paletteInputRef = useRef<HTMLInputElement>(null)
+
+  useEffect(
+    () => () => {
+      if (debounceRef.current) window.clearTimeout(debounceRef.current)
+    },
+    [],
+  )
 
   const build = useCallback(
     async (
@@ -56,48 +154,85 @@ function App() {
       controlOverride?: ControlValues,
     ) => {
       const c = controlOverride ?? controls
+      const id = ++buildIdRef.current
+      const report = (msg: string) => {
+        if (id === buildIdRef.current) setStatus(msg)
+      }
       setBusy(true)
       try {
-        const result = await runPipeline(
-          gpxText,
-          pal,
-          {
-            exaggeration: c.exaggeration,
-            bedSizeMm: c.bedSizeMm,
-            routeHeightMm: c.routeHeightMm,
-            routeWidthMm: c.routeWidthMm,
-            bboxPadPercent: c.bboxPadPercent,
-            fetchResolution: c.fetchResolution,
-            minColorRegionMm: c.minColorRegionMm,
-            colorEdgeSmooth: c.colorEdgeSmooth,
-            routeColorIndex: routeIdx,
-            imagerySeason: c.imagerySeason,
-          },
-          (msg) => setStatus(msg),
-        )
-        startTransition(() => {
-          setModel(result.model)
-          setTrackName(result.track.name)
-          setRouteColorIndex(result.routeColorIndex)
-          const seasonNote = result.imageryLabel ? ` · ${result.imageryLabel}` : ''
-          setStatus(
-            `${result.track.name} · ${result.model.materials.length} color meshes · ${result.model.extentMm.x.toFixed(0)}×${result.model.extentMm.y.toFixed(0)} mm${seasonNote}`,
+        const key = gridsCacheKey(gpxText, fetchSettingsOf(c))
+        let entry = gridsRef.current
+        if (!entry || entry.key !== key) {
+          const grids = await fetchTerrainGrids(
+            gpxText,
+            fetchSettingsOf(c),
+            report,
           )
+          if (id !== buildIdRef.current) return
+          entry = { key, grids }
+          gridsRef.current = entry
+        }
+
+        report('Building mesh…')
+        const resolvedRoute =
+          routeIdx ?? pickRouteColorIndex(pal, entry.grids.averageRgb)
+        const meshResolution = Math.min(
+          c.fetchResolution,
+          MESH_RESOLUTION_PREVIEW_MAX,
+        )
+        const built = await buildMesh(
+          key,
+          {
+            track: entry.grids.track.points,
+            height: entry.grids.height,
+            colors: entry.grids.colors,
+          },
+          pal,
+          meshBuildOptions(
+            meshSettingsOf(c, resolvedRoute, meshResolution),
+            resolvedRoute,
+          ),
+        )
+        if (id !== buildIdRef.current) return
+
+        const name = entry.grids.track.name
+        const label = entry.grids.imageryLabel
+        const gridRes = entry.grids.height.cols
+        startTransition(() => {
+          setModel(built)
+          setTrackName(name)
+          setRouteColorIndex(resolvedRoute)
+          setStatus(describeModel(name, built, gridRes, label))
         })
       } catch (err) {
-        const msg = err instanceof Error ? err.message : 'Build failed'
-        setStatus(msg)
+        if (id !== buildIdRef.current) return
+        setStatus(err instanceof Error ? err.message : 'Build failed')
         console.error(err)
       } finally {
-        setBusy(false)
+        if (id === buildIdRef.current) setBusy(false)
       }
     },
     [controls],
   )
 
+  /** Coalesce bursts of toggles/sliders into one rebuild. */
+  const scheduleBuild = useCallback(
+    (pal: Palette, routeIdx: number | null, next?: ControlValues) => {
+      if (!gpxTextRef.current) return
+      if (debounceRef.current) window.clearTimeout(debounceRef.current)
+      debounceRef.current = window.setTimeout(() => {
+        debounceRef.current = null
+        if (gpxTextRef.current) void build(gpxTextRef.current, pal, routeIdx, next)
+      }, 250)
+    },
+    [build],
+  )
+
   const onGpx = async (file: File) => {
     const text = await file.text()
     gpxTextRef.current = text
+    gridsRef.current = null
+    setFitKey((n) => n + 1)
     await build(text, palette, routeColorIndex)
   }
 
@@ -118,18 +253,37 @@ function App() {
   const onDownload = async () => {
     if (!model) return
     setBusy(true)
-    const triCount = model.indices.length / 3
-    setStatus(
-      triCount > 1_500_000
-        ? `Writing large 3MF (${Math.round(triCount / 1e6)}M tris) — lower Fetch if Bambu rejects it…`
-        : 'Writing 3MF…',
-    )
     try {
-      const blob = await export3mf(model, trackName || 'gpxto3mf')
+      let out = model
+      const entry = gridsRef.current
+      const fullRes = entry?.grids.height.cols ?? 0
+      if (entry && model.meshResolution < fullRes) {
+        setStatus(`Re-meshing at ${fullRes}² for export…`)
+        out = await buildMesh(
+          entry.key,
+          {
+            track: entry.grids.track.points,
+            height: entry.grids.height,
+            colors: entry.grids.colors,
+          },
+          palette,
+          meshBuildOptions(
+            meshSettingsOf(controls, routeColorIndex, fullRes),
+            routeColorIndex,
+          ),
+        )
+      }
+      const triCount = out.indices.length / 3
+      setStatus(
+        triCount > 1_500_000
+          ? `Writing large 3MF (${Math.round(triCount / 1e6)}M tris) — lower Fetch if Bambu rejects it…`
+          : 'Writing 3MF…',
+      )
+      const blob = await export3mf(out, trackName || 'gpxto3mf')
       const safe = (trackName || 'topo').replace(/[^\w.-]+/g, '_')
       downloadBlob(blob, `${safe}.3mf`)
       setStatus(
-        `Downloaded ${safe}.3mf — ${model.materials.length} objects, one per color. In Bambu use File → Import.`,
+        `Downloaded ${safe}.3mf — ${out.materials.length} objects, one per color. In Bambu use File → Import.`,
       )
     } catch (err) {
       setStatus(err instanceof Error ? err.message : 'Export failed')
@@ -140,21 +294,19 @@ function App() {
 
   const onRouteColorChange = (i: number) => {
     setRouteColorIndex(i)
-    if (gpxTextRef.current) {
-      void build(gpxTextRef.current, palette, i)
-    }
+    scheduleBuild(palette, i)
   }
 
   const onToggleEnabled = (i: number, enabled: boolean) => {
     const next = setColorEnabled(palette, i, enabled)
     setPalette(next)
-    const onCount = next.colors.filter((c) => c.enabled !== false).length
+    const onCount = next.colors.filter(
+      (c, idx) => c.enabled !== false && idx !== routeColorIndex,
+    ).length
     setStatus(
       `${enabled ? 'Enabled' : 'Disabled'} “${next.colors[i].name}” · ${onCount} terrain colors`,
     )
-    if (gpxTextRef.current) {
-      void build(gpxTextRef.current, next, routeColorIndex)
-    }
+    scheduleBuild(next, routeColorIndex)
   }
 
   return (
@@ -164,6 +316,7 @@ function App() {
         model={model}
         showNorth={controls.showNorth}
         showScale={controls.showScale}
+        fitKey={fitKey}
       />
 
       <header className="hero">
@@ -268,10 +421,17 @@ function App() {
         onClose={() => setDrawerOpen(false)}
         values={controls}
         onChange={(next) => {
-          const seasonChanged = next.imagerySeason !== controls.imagerySeason
+          const prev = controls
           setControls(next)
-          if (seasonChanged && gpxTextRef.current) {
+          if (!gpxTextRef.current) return
+          if (next.imagerySeason !== prev.imagerySeason) {
             void build(gpxTextRef.current, palette, routeColorIndex, next)
+            return
+          }
+          // Fetch-bound settings wait for the explicit rebuild; everything
+          // else remeshes from the cached grids with no network round trip.
+          if (!needsRefetch(prev, next) && needsRemesh(prev, next)) {
+            scheduleBuild(palette, routeColorIndex, next)
           }
         }}
         canRebuild={!!gpxTextRef.current && !busy}
