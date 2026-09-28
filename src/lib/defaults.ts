@@ -47,6 +47,12 @@ export const DEFAULTS = {
   minColorRegionMm: 4,
   /** 0 = stair-stepped color edges, 1 = rounded anti-aliased contours */
   colorEdgeSmooth: 0.75,
+  /**
+   * Ceiling on printed relief (mm). Real alpine relief at 1.8× runs past
+   * 400 mm on a 200 mm bed — far off the plate and kilos of filament — so the
+   * vertical scale is pulled back to fit this.
+   */
+  maxReliefMm: 45,
   /** Single-color solid under the colored shell (mm). */
   baseThicknessMm: 1.6,
   /**

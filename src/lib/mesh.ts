@@ -43,6 +43,8 @@ export type BuildOptions = {
   /** 0 keeps pixel edges, 1 rounds color borders into smooth contours */
   colorEdgeSmooth?: number
   baseThicknessMm?: number
+  /** Ceiling on printed relief in mm; the vertical scale shrinks to fit it. */
+  maxReliefMm?: number
   /**
    * Depth of the per-color shell in mm. Below it the model is one solid in the
    * dominant color, so AMS swaps are confined to the top layers. 0 = color the
@@ -340,8 +342,14 @@ export function buildTerrainModel(
     materials.push({ name, hex })
   }
 
+  // Exaggeration is relative; the cap is absolute, so a Himalayan bbox and a
+  // rolling one both land on a printable slab.
+  const naturalReliefMm = (height.maxH - minH) * scale * opts.exaggeration
+  const maxReliefMm = Math.max(2, opts.maxReliefMm ?? Infinity)
+  const reliefScale =
+    naturalReliefMm > maxReliefMm ? maxReliefMm / naturalReliefMm : 1
   const elevMm = (h: number) =>
-    (h - minH) * scale * opts.exaggeration + baseThicknessMm
+    (h - minH) * scale * opts.exaggeration * reliefScale + baseThicknessMm
 
   const halfW = (widthM * scale) / 2
   const halfH = (heightM * scale) / 2

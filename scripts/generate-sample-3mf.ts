@@ -108,6 +108,7 @@ async function main() {
     minColorRegionMm: DEFAULTS.minColorRegionMm,
     colorEdgeSmooth: DEFAULTS.colorEdgeSmooth,
     baseThicknessMm: DEFAULTS.baseThicknessMm,
+    maxReliefMm: DEFAULTS.maxReliefMm,
     colorShellMm: DEFAULTS.colorShellMm,
     colorMode: DEFAULTS.colorMode,
   })

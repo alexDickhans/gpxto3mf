@@ -20,6 +20,7 @@ export type ControlValues = {
   minColorRegionMm: number
   colorEdgeSmooth: number
   baseThicknessMm: number
+  maxReliefMm: number
   colorShellMm: number
   colorMode: ColorMode
   showNorth: boolean
@@ -77,6 +78,7 @@ export function ControlsDrawer({
         <select
           value={values.imagerySeason}
           disabled={busy}
+          aria-label="Imagery season"
           onChange={(e) => set('imagerySeason', e.target.value as ImagerySeason)}
         >
           {IMAGERY_SEASONS.map((season) => (
@@ -97,6 +99,7 @@ export function ControlsDrawer({
         </span>
         <select
           value={values.colorMode}
+          aria-label="Terrain color mode"
           onChange={(e) => set('colorMode', e.target.value as ColorMode)}
         >
           {COLOR_MODES.map((mode) => (
@@ -201,6 +204,24 @@ export function ControlsDrawer({
       </label>
 
       <label className="field">
+        <span>
+          Max relief · {values.maxReliefMm} mm
+          <em className="field-sub">
+            {' '}
+            (caps the vertical so steep bboxes stay on the plate)
+          </em>
+        </span>
+        <input
+          type="range"
+          min={10}
+          max={150}
+          step={5}
+          value={values.maxReliefMm}
+          onChange={(e) => set('maxReliefMm', parseInt(e.target.value, 10))}
+        />
+      </label>
+
+      <label className="field">
         <span>Vertical exaggeration · {values.exaggeration.toFixed(1)}×</span>
         <input
           type="range"
@@ -299,6 +320,7 @@ export function ControlsDrawer({
             minColorRegionMm: DEFAULTS.minColorRegionMm,
             colorEdgeSmooth: DEFAULTS.colorEdgeSmooth,
             baseThicknessMm: DEFAULTS.baseThicknessMm,
+            maxReliefMm: DEFAULTS.maxReliefMm,
             colorShellMm: DEFAULTS.colorShellMm,
             colorMode: DEFAULTS.colorMode,
             showNorth: DEFAULTS.showNorth,

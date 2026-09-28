@@ -36,6 +36,7 @@ const initialControls: ControlValues = {
   minColorRegionMm: DEFAULTS.minColorRegionMm,
   colorEdgeSmooth: DEFAULTS.colorEdgeSmooth,
   baseThicknessMm: DEFAULTS.baseThicknessMm,
+  maxReliefMm: DEFAULTS.maxReliefMm,
   colorShellMm: DEFAULTS.colorShellMm,
   colorMode: DEFAULTS.colorMode,
   showNorth: DEFAULTS.showNorth,
@@ -66,6 +67,7 @@ function meshSettingsOf(
     colorEdgeSmooth: c.colorEdgeSmooth,
     routeColorIndex,
     baseThicknessMm: c.baseThicknessMm,
+    maxReliefMm: c.maxReliefMm,
     colorShellMm: c.colorShellMm,
     colorMode: c.colorMode,
     meshResolution,
@@ -91,6 +93,7 @@ function needsRemesh(a: ControlValues, b: ControlValues): boolean {
     a.minColorRegionMm !== b.minColorRegionMm ||
     a.colorEdgeSmooth !== b.colorEdgeSmooth ||
     a.baseThicknessMm !== b.baseThicknessMm ||
+    a.maxReliefMm !== b.maxReliefMm ||
     a.colorShellMm !== b.colorShellMm ||
     a.colorMode !== b.colorMode
   )
@@ -113,8 +116,8 @@ function describeModel(
       : ''
   return (
     `${name} · ${model.materials.length} AMS colors · ` +
-    `${model.extentMm.x.toFixed(0)}×${model.extentMm.y.toFixed(0)} mm · ` +
-    `~${cm3.toFixed(0)} cm³ (${grams.toFixed(0)} g PLA if printed solid)` +
+    `${model.extentMm.x.toFixed(0)}×${model.extentMm.y.toFixed(0)}×${model.extentMm.z.toFixed(0)} mm · ` +
+    `${cm3.toFixed(0)} cm³ solid ≈ ${grams.toFixed(0)} g PLA (upper bound — infill uses less)` +
     `${season}${preview}`
   )
 }
@@ -198,11 +201,12 @@ function App() {
         const name = entry.grids.track.name
         const label = entry.grids.imageryLabel
         const gridRes = entry.grids.height.cols
+        setStatus(describeModel(name, built, gridRes, label))
+        // The mesh swap is the expensive commit; keep it interruptible.
         startTransition(() => {
           setModel(built)
           setTrackName(name)
           setRouteColorIndex(resolvedRoute)
-          setStatus(describeModel(name, built, gridRes, label))
         })
       } catch (err) {
         if (id !== buildIdRef.current) return

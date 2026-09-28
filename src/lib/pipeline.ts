@@ -37,6 +37,7 @@ export type MeshSettings = {
   colorEdgeSmooth: number
   routeColorIndex: number | null
   baseThicknessMm: number
+  maxReliefMm: number
   colorShellMm: number
   colorMode: ColorMode
   /** Mesh at most this many samples on a side (grids stay at fetch size). */
@@ -123,6 +124,7 @@ export function meshBuildOptions(
     minColorRegionMm: settings.minColorRegionMm,
     colorEdgeSmooth: settings.colorEdgeSmooth,
     baseThicknessMm: settings.baseThicknessMm,
+    maxReliefMm: settings.maxReliefMm,
     colorShellMm: settings.colorShellMm,
     colorMode: settings.colorMode,
     meshResolution: settings.meshResolution,
