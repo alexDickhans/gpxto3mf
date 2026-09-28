@@ -7,7 +7,11 @@ function cellIndex(i: number, j: number, cols: number) {
   return j * cols + i
 }
 
-/** Odd kernel majority vote — favors contiguous contours over noisy pixels. */
+/**
+ * Odd kernel majority vote — favors contiguous contours over noisy pixels.
+ * The window slides along each row over a reused histogram, so the cost per
+ * cell is O(radius + materials) instead of O(radius²) with a fresh Map.
+ */
 export function majorityFilter(
   cells: Uint16Array,
   cols: number,
@@ -18,23 +22,42 @@ export function majorityFilter(
   const out = new Uint16Array(cells.length)
   const r = Math.max(1, Math.floor(radius))
 
+  let maxVal = 0
+  for (let k = 0; k < cells.length; k++) {
+    if (cells[k] > maxVal) maxVal = cells[k]
+  }
+  const bins = maxVal + 1
+  const hist = new Int32Array(bins)
+
   for (let j = 0; j < rows; j++) {
+    const j0 = Math.max(0, j - r)
+    const j1 = Math.min(rows - 1, j + r)
+    hist.fill(0)
+    for (let jj = j0; jj <= j1; jj++) {
+      const row = jj * cols
+      const seed = Math.min(cols - 1, r)
+      for (let ii = 0; ii <= seed; ii++) hist[cells[row + ii]]++
+    }
+
     for (let i = 0; i < cols; i++) {
-      const counts = new Map<number, number>()
+      if (i > 0) {
+        const drop = i - r - 1
+        const add = i + r
+        for (let jj = j0; jj <= j1; jj++) {
+          const row = jj * cols
+          if (drop >= 0) hist[cells[row + drop]]--
+          if (add < cols) hist[cells[row + add]]++
+        }
+      }
+      // Ascending scan keeps the lowest material index on ties, matching the
+      // previous kernel-order tie-break.
       let best = cells[cellIndex(i, j, cols)]
       let bestN = 0
-      for (let dj = -r; dj <= r; dj++) {
-        for (let di = -r; di <= r; di++) {
-          const ni = i + di
-          const nj = j + dj
-          if (ni < 0 || nj < 0 || ni >= cols || nj >= rows) continue
-          const v = cells[cellIndex(ni, nj, cols)]
-          const n = (counts.get(v) ?? 0) + 1
-          counts.set(v, n)
-          if (n > bestN || (n === bestN && v < best)) {
-            bestN = n
-            best = v
-          }
+      for (let v = 0; v < bins; v++) {
+        const n = hist[v]
+        if (n > bestN) {
+          bestN = n
+          best = v
         }
       }
       out[cellIndex(i, j, cols)] = best

@@ -18,7 +18,10 @@ export function PaletteStrip({
   onRouteColorChange,
   onToggleEnabled,
 }: Props) {
-  const enabledCount = palette.colors.filter(isColorEnabled).length
+  // The route slot is never matched against terrain, so it does not count.
+  const enabledCount = palette.colors.filter(
+    (c, i) => isColorEnabled(c) && i !== routeColorIndex,
+  ).length
 
   return (
     <div className="palette-strip" role="list" aria-label="AMS palette slots">
@@ -55,11 +58,20 @@ export function PaletteStrip({
                 </span>
               </span>
             </button>
-            <label className="swatch-toggle" title={on ? 'Disable for terrain' : 'Enable for terrain'}>
+            <label
+              className="swatch-toggle"
+              title={
+                isRoute
+                  ? 'Route filament — held out of terrain matching'
+                  : on
+                    ? 'Disable for terrain'
+                    : 'Enable for terrain'
+              }
+            >
               <input
                 type="checkbox"
-                checked={on}
-                disabled={on && enabledCount <= 1}
+                checked={on && !isRoute}
+                disabled={isRoute || (on && enabledCount <= 1)}
                 onChange={(e) => onToggleEnabled(i, e.target.checked)}
                 aria-label={`${on ? 'Disable' : 'Enable'} ${c.name}`}
               />
@@ -68,7 +80,8 @@ export function PaletteStrip({
         )
       })}
       <p className="palette-hint">
-        Click a swatch for route filament · checkbox enables terrain matching ({enabledCount} on)
+        Click a swatch for route filament · checkbox enables terrain matching (
+        {enabledCount} terrain + route)
       </p>
     </div>
   )

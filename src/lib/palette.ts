@@ -10,15 +10,24 @@ export function isColorEnabled(c: PaletteColor): boolean {
   return c.enabled !== false
 }
 
-/** Indices into palette.colors that participate in terrain matching */
-export function enabledColorIndices(palette: Palette): number[] {
+/**
+ * Indices into palette.colors that participate in terrain matching. The route
+ * slot is held back so the line never disappears into the terrain it crosses;
+ * it is only reinstated when nothing else is enabled.
+ */
+export function enabledColorIndices(
+  palette: Palette,
+  excludeIndex?: number | null,
+): number[] {
   const idxs = palette.colors
     .map((c, i) => (isColorEnabled(c) ? i : -1))
     .filter((i) => i >= 0)
   if (idxs.length === 0) {
     throw new Error('Enable at least one palette color for terrain matching')
   }
-  return idxs
+  if (excludeIndex == null) return idxs
+  const kept = idxs.filter((i) => i !== excludeIndex)
+  return kept.length > 0 ? kept : idxs
 }
 
 function normalizeHex(hex: string): string {
@@ -139,11 +148,10 @@ export function deltaE76(a: [number, number, number], b: [number, number, number
   return Math.hypot(a[0] - b[0], a[1] - b[1], a[2] - b[2])
 }
 
-export function nearestPaletteIndex(
-  rgb: [number, number, number],
+export function nearestLabIndex(
+  lab: [number, number, number],
   paletteLabs: [number, number, number][],
 ): number {
-  const lab = rgbToLab(rgb[0], rgb[1], rgb[2])
   let best = 0
   let bestD = Infinity
   for (let i = 0; i < paletteLabs.length; i++) {
@@ -154,6 +162,13 @@ export function nearestPaletteIndex(
     }
   }
   return best
+}
+
+export function nearestPaletteIndex(
+  rgb: [number, number, number],
+  paletteLabs: [number, number, number][],
+): number {
+  return nearestLabIndex(rgbToLab(rgb[0], rgb[1], rgb[2]), paletteLabs)
 }
 
 /** Pick palette color with highest contrast vs average terrain Lab */
