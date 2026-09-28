@@ -3,6 +3,7 @@ import {
   FETCH_RESOLUTION_MAX,
   FETCH_RESOLUTION_MIN,
 } from '../lib/defaults'
+import { IMAGERY_SEASONS, type ImagerySeason } from '../lib/sentinelSeason'
 
 export type ControlValues = {
   exaggeration: number
@@ -15,6 +16,7 @@ export type ControlValues = {
   colorEdgeSmooth: number
   showNorth: boolean
   showScale: boolean
+  imagerySeason: ImagerySeason
 }
 
 type Props = {
@@ -24,6 +26,7 @@ type Props = {
   onChange: (v: ControlValues) => void
   onRebuild: () => void
   canRebuild: boolean
+  busy: boolean
 }
 
 export function ControlsDrawer({
@@ -33,6 +36,7 @@ export function ControlsDrawer({
   onChange,
   onRebuild,
   canRebuild,
+  busy,
 }: Props) {
   const set = <K extends keyof ControlValues>(key: K, val: ControlValues[K]) =>
     onChange({ ...values, [key]: val })
@@ -45,6 +49,24 @@ export function ControlsDrawer({
           ✕
         </button>
       </div>
+
+      <label className="field">
+        <span>
+          Imagery
+          <em className="field-sub"> northern months · Default is the Esri mosaic</em>
+        </span>
+        <select
+          value={values.imagerySeason}
+          disabled={busy}
+          onChange={(e) => set('imagerySeason', e.target.value as ImagerySeason)}
+        >
+          {IMAGERY_SEASONS.map((season) => (
+            <option key={season.id} value={season.id}>
+              {season.label} · {season.detail}
+            </option>
+          ))}
+        </select>
+      </label>
 
       <label className="field">
         <span>
@@ -196,6 +218,7 @@ export function ControlsDrawer({
             colorEdgeSmooth: DEFAULTS.colorEdgeSmooth,
             showNorth: DEFAULTS.showNorth,
             showScale: DEFAULTS.showScale,
+            imagerySeason: DEFAULTS.imagerySeason,
           })
         }
       >

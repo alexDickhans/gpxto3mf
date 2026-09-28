@@ -14,6 +14,7 @@ import {
   FETCH_RESOLUTION_MAX,
   FETCH_RESOLUTION_MIN,
 } from './lib/defaults'
+import { IMAGERY_SEASONS, type ImagerySeason } from './lib/sentinelSeason'
 import { setColorEnabled } from './lib/palette'
 import { downloadBlob, export3mf } from './lib/export3mf'
 import './App.css'
@@ -29,6 +30,7 @@ const initialControls: ControlValues = {
   colorEdgeSmooth: DEFAULTS.colorEdgeSmooth,
   showNorth: DEFAULTS.showNorth,
   showScale: DEFAULTS.showScale,
+  imagerySeason: DEFAULTS.imagerySeason,
 }
 
 function App() {
@@ -47,22 +49,29 @@ function App() {
   const paletteInputRef = useRef<HTMLInputElement>(null)
 
   const build = useCallback(
-    async (gpxText: string, pal: Palette, routeIdx: number | null) => {
+    async (
+      gpxText: string,
+      pal: Palette,
+      routeIdx: number | null,
+      controlOverride?: ControlValues,
+    ) => {
+      const c = controlOverride ?? controls
       setBusy(true)
       try {
         const result = await runPipeline(
           gpxText,
           pal,
           {
-            exaggeration: controls.exaggeration,
-            bedSizeMm: controls.bedSizeMm,
-            routeHeightMm: controls.routeHeightMm,
-            routeWidthMm: controls.routeWidthMm,
-            bboxPadPercent: controls.bboxPadPercent,
-            fetchResolution: controls.fetchResolution,
-            minColorRegionMm: controls.minColorRegionMm,
-            colorEdgeSmooth: controls.colorEdgeSmooth,
+            exaggeration: c.exaggeration,
+            bedSizeMm: c.bedSizeMm,
+            routeHeightMm: c.routeHeightMm,
+            routeWidthMm: c.routeWidthMm,
+            bboxPadPercent: c.bboxPadPercent,
+            fetchResolution: c.fetchResolution,
+            minColorRegionMm: c.minColorRegionMm,
+            colorEdgeSmooth: c.colorEdgeSmooth,
             routeColorIndex: routeIdx,
+            imagerySeason: c.imagerySeason,
           },
           (msg) => setStatus(msg),
         )
@@ -70,8 +79,9 @@ function App() {
           setModel(result.model)
           setTrackName(result.track.name)
           setRouteColorIndex(result.routeColorIndex)
+          const seasonNote = result.imageryLabel ? ` · ${result.imageryLabel}` : ''
           setStatus(
-            `${result.track.name} · ${result.model.materials.length} color meshes · ${result.model.extentMm.x.toFixed(0)}×${result.model.extentMm.y.toFixed(0)} mm`,
+            `${result.track.name} · ${result.model.materials.length} color meshes · ${result.model.extentMm.x.toFixed(0)}×${result.model.extentMm.y.toFixed(0)} mm${seasonNote}`,
           )
         })
       } catch (err) {
@@ -195,6 +205,29 @@ function App() {
           >
             Controls
           </button>
+          <label className="season-select">
+            <span className="quality-inline-label">Season</span>
+            <select
+              value={controls.imagerySeason}
+              disabled={busy}
+              aria-label="Imagery season"
+              title="Northern-hemisphere months. Default keeps the Esri imagery mosaic."
+              onChange={(e) => {
+                const imagerySeason = e.target.value as ImagerySeason
+                const next = { ...controls, imagerySeason }
+                setControls(next)
+                if (gpxTextRef.current) {
+                  void build(gpxTextRef.current, palette, routeColorIndex, next)
+                }
+              }}
+            >
+              {IMAGERY_SEASONS.map((season) => (
+                <option key={season.id} value={season.id}>
+                  {season.label} · {season.detail}
+                </option>
+              ))}
+            </select>
+          </label>
           <label className="quality-inline fetch-slider">
             <span className="quality-inline-label">
               Fetch {controls.fetchResolution}²
@@ -234,8 +267,15 @@ function App() {
         open={drawerOpen}
         onClose={() => setDrawerOpen(false)}
         values={controls}
-        onChange={setControls}
+        onChange={(next) => {
+          const seasonChanged = next.imagerySeason !== controls.imagerySeason
+          setControls(next)
+          if (seasonChanged && gpxTextRef.current) {
+            void build(gpxTextRef.current, palette, routeColorIndex, next)
+          }
+        }}
         canRebuild={!!gpxTextRef.current && !busy}
+        busy={busy}
         onRebuild={() => {
           if (gpxTextRef.current) {
             void build(gpxTextRef.current, palette, routeColorIndex)

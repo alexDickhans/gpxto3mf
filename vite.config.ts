@@ -1,5 +1,11 @@
 import react from '@vitejs/plugin-react'
 import { defineConfig, type Plugin } from 'vite'
+import {
+  fetchSentinelSeasonBlob,
+  isNamedSeason,
+  parseBBoxParam,
+  parseSizeParam,
+} from './src/lib/sentinelSeason.ts'
 
 /** Dev-time tile/export proxy so DEM/imagery work without CORS. */
 function tileProxyPlugin(): Plugin {
@@ -9,7 +15,7 @@ function tileProxyPlugin(): Plugin {
   const IMG_EXPORT =
     'https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/export'
 
-  const cache = new Map<string, { buf: Buffer; ct: string }>()
+  const cache = new Map<string, { buf: Buffer; ct: string; label?: string }>()
   const MAX_CACHE = 400
 
   function sendCached(
@@ -19,10 +25,11 @@ function tileProxyPlugin(): Plugin {
   ) {
     return (async () => {
       const hit = cache.get(key)
-      if (hit) {
+        if (hit) {
         res.setHeader('Content-Type', hit.ct)
         res.setHeader('Cache-Control', 'public, max-age=86400')
         res.setHeader('X-Tile-Cache', 'HIT')
+        if (hit.label) res.setHeader('X-Imagery-Label', hit.label)
         res.end(hit.buf)
         return
       }
@@ -59,6 +66,40 @@ function tileProxyPlugin(): Plugin {
         if (pathOnly === '/api/imagery-export') {
           try {
             const u = new URL(raw, 'http://localhost')
+            const season = u.searchParams.get('season')
+            if (season) {
+              const bbox = parseBBoxParam(u.searchParams.get('bbox') || '')
+              const side = parseSizeParam(u.searchParams.get('size') || '')
+              if (!isNamedSeason(season) || !bbox || side == null) {
+                res.statusCode = 400
+                res.end('Bad seasonal export params')
+                return
+              }
+              const cacheKey = `season:${season}:${bbox.minLon},${bbox.minLat},${bbox.maxLon},${bbox.maxLat}:${side}`
+              const hit = cache.get(cacheKey)
+              if (hit) {
+                res.setHeader('Content-Type', hit.ct)
+                res.setHeader('Cache-Control', 'public, max-age=86400')
+                res.setHeader('X-Tile-Cache', 'HIT')
+                if (hit.label) res.setHeader('X-Imagery-Label', hit.label)
+                res.end(hit.buf)
+                return
+              }
+              const got = await fetchSentinelSeasonBlob(bbox, side, season)
+              const buf = Buffer.from(await got.blob.arrayBuffer())
+              const ct = got.blob.type || 'image/png'
+              if (cache.size >= MAX_CACHE) {
+                const first = cache.keys().next().value
+                if (first) cache.delete(first)
+              }
+              cache.set(cacheKey, { buf, ct, label: got.label })
+              res.setHeader('Content-Type', ct)
+              res.setHeader('Cache-Control', 'public, max-age=86400')
+              res.setHeader('X-Tile-Cache', 'MISS')
+              res.setHeader('X-Imagery-Label', got.label)
+              res.end(buf)
+              return
+            }
             const bbox = u.searchParams.get('bbox')
             const size = u.searchParams.get('size')
             const bboxSR = u.searchParams.get('bboxSR') || '4326'

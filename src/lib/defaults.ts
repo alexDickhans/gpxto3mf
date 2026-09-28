@@ -30,6 +30,8 @@ export const DEFAULTS = {
   colorEdgeSmooth: 0.75,
   showNorth: true,
   showScale: true,
+  /** `default` keeps Esri World Imagery; other values request that season */
+  imagerySeason: 'default' as const,
 } as const
 
 function lerp(a: number, b: number, t: number) {
