@@ -239,6 +239,10 @@ body,
   opacity: 0.38;
 }
 
+.swatch.route.disabled {
+  opacity: 1;
+}
+
 .swatch.unused:not(.disabled) {
   opacity: 0.55;
 }
@@ -454,6 +458,249 @@ body,
   cursor: pointer;
 }
 
+.combo-backdrop {
+  position: absolute;
+  inset: 0;
+  z-index: 5;
+  border: 0;
+  padding: 0;
+  background: rgba(28, 36, 32, 0.28);
+  cursor: pointer;
+}
+
+.combo-panel {
+  position: absolute;
+  z-index: 6;
+  top: 0;
+  left: 0;
+  height: 100%;
+  width: min(42rem, 100vw);
+  background: rgba(238, 243, 239, 0.96);
+  backdrop-filter: blur(16px);
+  border-right: 1px solid var(--glass-edge);
+  transform: translateX(-105%);
+  transition: transform 0.35s cubic-bezier(0.22, 1, 0.36, 1);
+  display: flex;
+  flex-direction: column;
+  pointer-events: none;
+}
+
+.combo-panel.open {
+  transform: translateX(0);
+  pointer-events: auto;
+}
+
+.combo-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 1rem;
+  padding: 1.15rem 1.25rem 0;
+}
+
+.combo-head h2 {
+  margin: 0;
+  font-family: var(--font-brand);
+  font-size: 1.8rem;
+  font-weight: 700;
+  line-height: 1;
+}
+
+.combo-kicker {
+  margin: 0 0 0.2rem;
+  font-size: 0.72rem;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--sage);
+}
+
+.combo-lede,
+.combo-units-note {
+  margin: 0.65rem 1.25rem 0;
+  font-size: 0.82rem;
+  line-height: 1.4;
+  color: var(--ink-soft);
+}
+
+.combo-units {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 0.4rem;
+  margin: 0.85rem 1.25rem 0;
+}
+
+.combo-units button {
+  appearance: none;
+  border: 1.5px solid var(--ink);
+  background: transparent;
+  color: var(--ink);
+  font: inherit;
+  font-weight: 600;
+  font-size: 0.82rem;
+  padding: 0.45rem 0.5rem;
+  border-radius: 2px;
+  cursor: pointer;
+}
+
+.combo-units button.on {
+  background: var(--ink);
+  color: var(--mist);
+}
+
+.combo-scroll {
+  flex: 1;
+  overflow-y: auto;
+  padding: 0.85rem 1.25rem 1rem;
+}
+
+.combo-group h3 {
+  margin: 0.85rem 0 0.4rem;
+  font-family: var(--font-brand);
+  font-size: 1.05rem;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--moss);
+}
+
+.combo-group:first-child h3 {
+  margin-top: 0.15rem;
+}
+
+.combo-card {
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  gap: 0.45rem;
+  width: 100%;
+  margin: 0 0 0.55rem;
+  padding: 0.75rem 0.75rem 0.8rem;
+  text-align: left;
+  font: inherit;
+  color: inherit;
+  background: rgba(255, 255, 255, 0.45);
+  border: 1.5px solid var(--glass-edge);
+  border-radius: 2px;
+  cursor: pointer;
+}
+
+.combo-card.featured {
+  border-color: rgba(212, 84, 26, 0.45);
+}
+
+.combo-card.selected {
+  border-color: var(--ink);
+  box-shadow: inset 3px 0 0 var(--blaze);
+}
+
+.combo-card-top {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.5rem;
+}
+
+.combo-card-name {
+  font-family: var(--font-brand);
+  font-size: 1.25rem;
+  font-weight: 700;
+  line-height: 1;
+}
+
+.combo-tag {
+  font-size: 0.68rem;
+  font-weight: 600;
+  letter-spacing: 0.03em;
+  text-transform: uppercase;
+  color: var(--blaze-deep);
+  border: 1px solid var(--blaze);
+  padding: 0.15rem 0.35rem;
+  border-radius: 2px;
+}
+
+.combo-card-summary,
+.combo-why {
+  font-size: 0.8rem;
+  line-height: 1.35;
+  color: var(--ink-soft);
+}
+
+.combo-why.extended {
+  color: var(--ink);
+}
+
+.combo-ams-block {
+  display: flex;
+  flex-direction: column;
+  gap: 0.28rem;
+}
+
+.combo-ams-label {
+  font-size: 0.68rem;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--sage);
+}
+
+.combo-spools {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 0.4rem;
+}
+
+.combo-spool {
+  display: flex;
+  flex-direction: column;
+  gap: 0.12rem;
+  min-width: 0;
+}
+
+.combo-spool.route .combo-chip {
+  outline: 2px solid var(--blaze);
+  outline-offset: 1px;
+}
+
+.combo-chip {
+  display: block;
+  height: 1.7rem;
+  border-radius: 2px;
+  border: 1px solid rgba(0, 0, 0, 0.18);
+}
+
+.combo-spool-name {
+  font-size: 0.72rem;
+  font-weight: 600;
+  line-height: 1.15;
+}
+
+.combo-spool-meta {
+  font-size: 0.65rem;
+  line-height: 1.2;
+  color: var(--ink-soft);
+}
+
+.combo-foot {
+  flex-shrink: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+  padding: 0.75rem 1.25rem 1rem;
+  border-top: 1px solid var(--glass-edge);
+  background: rgba(238, 243, 239, 0.98);
+}
+
+.combo-foot .btn {
+  width: 100%;
+}
+
+.combo-foot p {
+  margin: 0;
+  font-size: 0.75rem;
+  color: var(--ink-soft);
+}
+
 @media (max-width: 640px) {
   .hero {
     max-width: 100%;
@@ -474,5 +721,9 @@ body,
   .btn {
     padding: 0.55rem 0.8rem;
     font-size: 0.85rem;
+  }
+
+  .combo-spools {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 }

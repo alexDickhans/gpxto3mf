@@ -1,7 +1,9 @@
 import { useCallback, useRef, useState, startTransition } from 'react'
 import { Preview } from './components/Preview'
 import { PaletteStrip } from './components/PaletteStrip'
+import { ColorSelector, type LoadedCombo } from './components/ColorSelector'
 import { ControlsDrawer, type ControlValues } from './components/ControlsDrawer'
+import { comboById, comboToPalette, routeIndexFor } from './lib/bambuColors'
 import {
   DEFAULT_PALETTE,
   DEFAULTS,
@@ -41,6 +43,8 @@ function App() {
   )
   const [controls, setControls] = useState<ControlValues>(initialControls)
   const [drawerOpen, setDrawerOpen] = useState(false)
+  const [selectorOpen, setSelectorOpen] = useState(false)
+  const [loadedCombo, setLoadedCombo] = useState<LoadedCombo | null>(null)
   const [status, setStatus] = useState('Upload a GPX to raise a topo')
   const [busy, setBusy] = useState(false)
   const [trackName, setTrackName] = useState<string | null>(null)
@@ -106,6 +110,7 @@ function App() {
     try {
       const pal = parsePaletteText(text, file.name)
       setPalette(pal)
+      setLoadedCombo(null)
       setStatus(`Palette “${pal.name}” · ${pal.colors.length} colors`)
       if (gpxTextRef.current) {
         await build(gpxTextRef.current, pal, null)
@@ -140,14 +145,32 @@ function App() {
 
   const onRouteColorChange = (i: number) => {
     setRouteColorIndex(i)
+    setLoadedCombo(null)
     if (gpxTextRef.current) {
       void build(gpxTextRef.current, palette, i)
+    }
+  }
+
+  const onLoadCombo = (id: string, units: LoadedCombo['units']) => {
+    const combo = comboById(id)
+    const pal = comboToPalette(combo, units)
+    const routeIdx = routeIndexFor(combo, units)
+    setPalette(pal)
+    setRouteColorIndex(routeIdx)
+    setLoadedCombo({ id, units })
+    const routeName = pal.colors[routeIdx]?.name ?? 'route'
+    setStatus(
+      `${combo.name} · ${pal.colors.length} Bambu spools · ${routeName} is the route`,
+    )
+    if (gpxTextRef.current) {
+      void build(gpxTextRef.current, pal, routeIdx)
     }
   }
 
   const onToggleEnabled = (i: number, enabled: boolean) => {
     const next = setColorEnabled(palette, i, enabled)
     setPalette(next)
+    setLoadedCombo(null)
     const onCount = next.colors.filter((c) => c.enabled !== false).length
     setStatus(
       `${enabled ? 'Enabled' : 'Disabled'} “${next.colors[i].name}” · ${onCount} terrain colors`,
@@ -189,6 +212,13 @@ function App() {
             onClick={() => paletteInputRef.current?.click()}
           >
             Import palette
+          </button>
+          <button
+            type="button"
+            className="btn"
+            onClick={() => setSelectorOpen(true)}
+          >
+            Color selector
           </button>
           <button
             type="button"
@@ -260,8 +290,20 @@ function App() {
           routeColorIndex={routeColorIndex}
           onRouteColorChange={onRouteColorChange}
           onToggleEnabled={onToggleEnabled}
+          sourceLabel={
+            loadedCombo
+              ? `${comboById(loadedCombo.id).name} · ${loadedCombo.units === 1 ? '1 AMS' : '2 AMS'}`
+              : null
+          }
         />
       </footer>
+
+      <ColorSelector
+        open={selectorOpen}
+        onClose={() => setSelectorOpen(false)}
+        loaded={loadedCombo}
+        onLoad={onLoadCombo}
+      />
 
       <ControlsDrawer
         open={drawerOpen}

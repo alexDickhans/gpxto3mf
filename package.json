@@ -7,6 +7,7 @@
     "dev": "vite",
     "build": "tsc -b && vite build",
     "lint": "oxlint",
+    "check-combos": "tsx scripts/check-bambu-combos.ts",
     "preview": "vite preview",
     "validate-3mf": "tsx scripts/generate-sample-3mf.ts /tmp/gpxto3mf-sample.3mf && node scripts/validate-3mf.mjs --self-test /tmp/gpxto3mf-sample.3mf"
   },

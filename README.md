@@ -13,6 +13,8 @@ Open the URL Vite prints. Upload a `.gpx`, optionally import a palette (see `pub
 
 Sample files: `public/sample.gpx`, `public/sample-palette.json`.
 
+**Color selector** loads a Bambu Lab PLA combo for the landscape you are printing: high alpine, tundra, winter forest, montane forest, autumn woodland, desert canyon, badlands, volcanic, coast, and tropical. Each combo is four spools for one AMS, or eight when you have two AMS units. The route spool is left out of terrain matching so it prints only the raised line. Hex values are Bambu’s published PLA Basic and PLA Matte colors.
+
 ## Build / deploy
 
 ```bash

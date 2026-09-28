@@ -8,6 +8,7 @@ type Props = {
   routeColorIndex: number
   onRouteColorChange: (i: number) => void
   onToggleEnabled: (i: number, enabled: boolean) => void
+  sourceLabel?: string | null
 }
 
 export function PaletteStrip({
@@ -17,6 +18,7 @@ export function PaletteStrip({
   routeColorIndex,
   onRouteColorChange,
   onToggleEnabled,
+  sourceLabel,
 }: Props) {
   const enabledCount = palette.colors.filter(isColorEnabled).length
 
@@ -51,7 +53,13 @@ export function PaletteStrip({
               <span className="swatch-meta">
                 <span className="swatch-name">{c.name}</span>
                 <span className="swatch-count">
-                  {materials ? (count > 0 ? count.toLocaleString() : '—') : 'AMS'}
+                  {isRoute && !on
+                    ? 'route'
+                    : materials
+                      ? count > 0
+                        ? count.toLocaleString()
+                        : '—'
+                      : 'AMS'}
                 </span>
               </span>
             </button>
@@ -68,6 +76,7 @@ export function PaletteStrip({
         )
       })}
       <p className="palette-hint">
+        {sourceLabel ? `${sourceLabel} · ` : ''}
         Click a swatch for route filament · checkbox enables terrain matching ({enabledCount} on)
       </p>
     </div>
