@@ -6,7 +6,7 @@
 import { readFileSync, writeFileSync } from 'node:fs'
 import { dirname, join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
-import { buildTerrainModel } from '../src/lib/mesh.ts'
+import { buildTerrainModel, type TerrainModel } from '../src/lib/mesh.ts'
 import { export3mf } from '../src/lib/export3mf.ts'
 import { DEFAULTS, DEFAULT_PALETTE } from '../src/lib/defaults.ts'
 import { boundsOf, localExtent, type LatLon } from '../src/lib/geo.ts'
@@ -135,12 +135,64 @@ async function main() {
     `skirt rimZ=${maxEdge.toFixed(2)} mm interiorZ=${maxInterior.toFixed(2)} mm`,
   )
 
+  const volume = componentVolume(model)
+  const bboxVol = model.extentMm.x * model.extentMm.y * model.extentMm.z
+  let bedInterior = 0
+  let minZ = Infinity
+  for (let i = 0; i < model.positions.length; i += 3) {
+    const x = model.positions[i]
+    const y = model.positions[i + 1]
+    const z = model.positions[i + 2]
+    if (z < minZ) minZ = z
+    if (Math.abs(x) < halfW * 0.5 && Math.abs(y) < halfH * 0.5 && z < 0.05) {
+      bedInterior++
+    }
+  }
+  const ratio = bboxVol > 0 ? volume / bboxVol : 0
+  console.log(
+    `volume=${volume.toFixed(1)} mm3 bbox=${bboxVol.toFixed(1)} mm3 ratio=${ratio.toFixed(3)} minZ=${minZ.toFixed(3)} bedInterior=${bedInterior}`,
+  )
+  if (minZ < -0.05 || minZ > 0.05) {
+    throw new Error(`terrain bottom left the bed (minZ ${minZ.toFixed(3)} mm)`)
+  }
+  if (bedInterior < 8) {
+    throw new Error(
+      `interior bottom is not a solid on z=0 (bed vertices in the interior: ${bedInterior})`,
+    )
+  }
+
   const blob = await export3mf(model, track.name)
   const buf = Buffer.from(await blob.arrayBuffer())
   writeFileSync(outPath, buf)
   console.log(
     `wrote ${outPath} bytes=${buf.length} vertices=${model.positions.length / 3} tris=${model.indices.length / 3} materials=${model.materials.length}`,
   )
+}
+
+function componentVolume(model: TerrainModel): number {
+  const { positions, indices, triMaterials, materials } = model
+  let total = 0
+  for (let m = 0; m < materials.length; m++) {
+    let vol = 0
+    for (let t = 0; t < triMaterials.length; t++) {
+      if (triMaterials[t] !== m) continue
+      const ia = indices[t * 3] * 3
+      const ib = indices[t * 3 + 1] * 3
+      const ic = indices[t * 3 + 2] * 3
+      const ax = positions[ia]
+      const ay = positions[ia + 1]
+      const az = positions[ia + 2]
+      const bx = positions[ib]
+      const by = positions[ib + 1]
+      const bz = positions[ib + 2]
+      const cx = positions[ic]
+      const cy = positions[ic + 1]
+      const cz = positions[ic + 2]
+      vol += ax * (by * cz - bz * cy) - ay * (bx * cz - bz * cx) + az * (bx * cy - by * cx)
+    }
+    total += Math.abs(vol) / 6
+  }
+  return total
 }
 
 main().catch((err) => {

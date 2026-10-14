@@ -1,14 +1,23 @@
-import { deltaE76, hexToLab } from '../src/lib/palette'
+import {
+  deltaE76,
+  enabledColorIndices,
+  hexToLab,
+  hexToRgb,
+  matchTerrainCell,
+  rgbToLab,
+} from '../src/lib/palette'
 import {
   BAMBU_FILAMENTS,
   ENVIRONMENT_COMBOS,
+  comboById,
+  comboToPalette,
   filamentById,
   slotsFor,
   type AmsUnits,
   type ComboRole,
 } from '../src/lib/bambuColors'
 
-const TERRAIN_MIN = 12
+const TERRAIN_MIN = 24
 const ROUTE_MIN = 22
 
 let failed = 0
@@ -97,6 +106,69 @@ function reportSeparation(comboId: string, units: AmsUnits, slots: ComboRole[]) 
   console.log(
     `${comboId} · ${units} AMS · closest terrain ${closestPair} ΔE ${closest.toFixed(1)}`,
   )
+}
+
+function labToRgb(L: number, a: number, b: number): [number, number, number] {
+  const fy = (L + 16) / 116
+  const fx = a / 500 + fy
+  const fz = fy - b / 200
+  const finv = (t: number) => {
+    const t3 = t * t * t
+    return t3 > 216 / 24389 ? t3 : (t - 4 / 29) * (108 / 841)
+  }
+  const x = finv(fx) * 0.95047
+  const y = finv(fy)
+  const z = finv(fz) * 1.08883
+  const rl = x * 3.2404542 + y * -1.5371385 + z * -0.4985314
+  const gl = x * -0.969266 + y * 1.8760108 + z * 0.041556
+  const bl = x * 0.0556434 + y * -0.2040259 + z * 1.0572252
+  const toSrgb = (c: number) => {
+    const v = c <= 0.0031308 ? 12.92 * c : 1.055 * c ** (1 / 2.4) - 0.055
+    return Math.max(0, Math.min(255, Math.round(v * 255)))
+  }
+  return [toSrgb(rl), toSrgb(gl), toSrgb(bl)]
+}
+
+function expectMatch(
+  comboId: string,
+  units: AmsUnits,
+  rgb: [number, number, number],
+  elev01: number,
+  filamentId: string,
+  label: string,
+) {
+  const palette = comboToPalette(comboById(comboId), units)
+  const idxs = enabledColorIndices(palette)
+  const labs = idxs.map((i) => hexToLab(palette.colors[i].hex))
+  const lands = idxs.map((i) => palette.colors[i].land)
+  const local = matchTerrainCell(rgb, elev01, labs, lands)
+  const got = palette.colors[idxs[local]].name
+  const want = filamentById(filamentId).name
+  if (got !== want) fail(`${label}: got ${got}, want ${want}`)
+  else console.log(`match ${label} → ${got}`)
+}
+
+const spool = (id: string) => hexToRgb(filamentById(id).hex)
+
+expectMatch('high-alpine', 2, labToRgb(87, -5, -6), 0.85, 'ice-blue', 'pale glacier')
+expectMatch('high-alpine', 2, spool('ivory-white'), 0.9, 'ivory-white', 'sunlit snow')
+expectMatch('high-alpine', 2, labToRgb(41, 8, 22), 0.4, 'dark-chocolate', 'talus')
+expectMatch('high-alpine', 2, labToRgb(66, -16, -23), 0.2, 'marine-blue', 'tarn')
+expectMatch('high-alpine', 2, spool('dark-green'), 0.5, 'dark-green', 'krummholz')
+expectMatch('winter-forest', 2, labToRgb(76, -1, -6), 0.8, 'ice-blue', 'shaded snow')
+expectMatch('autumn-woodland', 2, spool('lemon-yellow'), 0.4, 'lemon-yellow', 'lemon spool')
+expectMatch('autumn-woodland', 2, labToRgb(85, -4, 66), 0.4, 'lemon-yellow', 'aspen')
+expectMatch('autumn-woodland', 2, spool('mandarin-orange'), 0.4, 'mandarin-orange', 'maple')
+expectMatch('tropical', 2, labToRgb(21, -12, 14), 0.3, 'dark-green', 'dark moss')
+expectMatch('tropical', 2, spool('ash-gray'), 0.4, 'ash-gray', 'granite')
+expectMatch('volcanic', 2, labToRgb(75, 0, 6), 0.4, 'nardo-gray', 'volcanic ash')
+expectMatch('coast', 2, spool('ice-blue'), 0.05, 'ice-blue', 'shallows')
+
+// Guard the Lab→RGB round trip so a bad inverse cannot fake a pass.
+const glacier = labToRgb(87, -5, -6)
+const glacierLab = rgbToLab(glacier[0], glacier[1], glacier[2])
+if (Math.abs(glacierLab[0] - 87) > 2 || Math.abs(glacierLab[2] + 6) > 2) {
+  fail(`lab inverse drifted (${glacierLab.map((n) => n.toFixed(1)).join(', ')})`)
 }
 
 if (failed > 0) {

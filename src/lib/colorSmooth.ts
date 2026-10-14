@@ -18,19 +18,28 @@ export function majorityFilter(
   const out = new Uint16Array(cells.length)
   const r = Math.max(1, Math.floor(radius))
 
+  let histSize = 1
+  for (let i = 0; i < cells.length; i++) {
+    if (cells[i] >= histSize) histSize = cells[i] + 1
+  }
+  const counts = new Uint32Array(histSize)
+  const touched: number[] = []
+
   for (let j = 0; j < rows; j++) {
     for (let i = 0; i < cols; i++) {
-      const counts = new Map<number, number>()
+      touched.length = 0
       let best = cells[cellIndex(i, j, cols)]
       let bestN = 0
       for (let dj = -r; dj <= r; dj++) {
+        const nj = j + dj
+        if (nj < 0 || nj >= rows) continue
+        const row = nj * cols
         for (let di = -r; di <= r; di++) {
           const ni = i + di
-          const nj = j + dj
-          if (ni < 0 || nj < 0 || ni >= cols || nj >= rows) continue
-          const v = cells[cellIndex(ni, nj, cols)]
-          const n = (counts.get(v) ?? 0) + 1
-          counts.set(v, n)
+          if (ni < 0 || ni >= cols) continue
+          const v = cells[row + ni]
+          const n = ++counts[v]
+          if (n === 1) touched.push(v)
           if (n > bestN || (n === bestN && v < best)) {
             bestN = n
             best = v
@@ -38,6 +47,7 @@ export function majorityFilter(
         }
       }
       out[cellIndex(i, j, cols)] = best
+      for (let t = 0; t < touched.length; t++) counts[touched[t]] = 0
     }
   }
   return out

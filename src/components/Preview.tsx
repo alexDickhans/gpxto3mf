@@ -4,6 +4,22 @@ import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js'
 import type { TerrainModel } from '../lib/mesh'
 import { hexToRgb } from '../lib/palette'
 
+function disposeObject(obj: THREE.Object3D) {
+  obj.traverse((child) => {
+    if (child instanceof THREE.Mesh) {
+      child.geometry.dispose()
+      if (Array.isArray(child.material)) child.material.forEach((m) => m.dispose())
+      else child.material.dispose()
+    } else if (child instanceof THREE.Sprite) {
+      child.material.dispose()
+    } else if (child instanceof THREE.Line) {
+      child.geometry.dispose()
+      if (Array.isArray(child.material)) child.material.forEach((m) => m.dispose())
+      else child.material.dispose()
+    }
+  })
+}
+
 type Props = {
   model: TerrainModel | null
   showNorth: boolean
@@ -115,22 +131,12 @@ export function Preview({ model, showNorth, showScale }: Props) {
     const st = stateRef.current
     if (!st) return
 
-    while (st.group.children.length) {
-      const c = st.group.children[0]
-      st.group.remove(c)
-      if (c instanceof THREE.Mesh) {
-        c.geometry.dispose()
-        if (Array.isArray(c.material)) c.material.forEach((m) => m.dispose())
-        else c.material.dispose()
-      }
-    }
-    while (st.markers.children.length) {
-      const c = st.markers.children[0]
-      st.markers.remove(c)
-    }
+    const nextMeshes: THREE.Object3D[] = []
+    const nextMarkers: THREE.Object3D[] = []
+    let cameraPos: [number, number, number] | null = null
+    let cameraTarget: [number, number, number] | null = null
 
     if (!model) {
-      // Empty plaque placeholder
       const geo = new THREE.BoxGeometry(80, 60, 4)
       const mat = new THREE.MeshStandardMaterial({
         color: 0x6b7368,
@@ -139,101 +145,115 @@ export function Preview({ model, showNorth, showScale }: Props) {
       })
       const mesh = new THREE.Mesh(geo, mat)
       mesh.position.z = 2
-      st.group.add(mesh)
-      st.camera.position.set(90, -120, 80)
-      st.controls.target.set(0, 0, 8)
-      return
-    }
-
-    const mats = model.materials.map((m) => {
-      const [r, g, b] = hexToRgb(m.hex)
-      return new THREE.MeshStandardMaterial({
-        color: new THREE.Color(r / 255, g / 255, b / 255),
-        roughness: 0.72,
-        metalness: 0.02,
-        flatShading: true,
-        emissive: new THREE.Color(r / 255, g / 255, b / 255),
-        emissiveIntensity: 0.08,
+      nextMeshes.push(mesh)
+      cameraPos = [90, -120, 80]
+      cameraTarget = [0, 0, 8]
+    } else {
+      const mats = model.materials.map((m) => {
+        const [r, g, b] = hexToRgb(m.hex)
+        return new THREE.MeshStandardMaterial({
+          color: new THREE.Color(r / 255, g / 255, b / 255),
+          roughness: 0.72,
+          metalness: 0.02,
+          flatShading: true,
+          emissive: new THREE.Color(r / 255, g / 255, b / 255),
+          emissiveIntensity: 0.08,
+        })
       })
-    })
 
-    // Split by material for Three.js multi-material
-    const groups: number[][] = model.materials.map(() => [])
-    for (let t = 0; t < model.triMaterials.length; t++) {
-      const mi = model.triMaterials[t]
-      const i0 = t * 3
-      groups[mi].push(
-        model.indices[i0],
-        model.indices[i0 + 1],
-        model.indices[i0 + 2],
-      )
-    }
+      const vertCount = model.positions.length / 3
+      for (let mi = 0; mi < model.materials.length; mi++) {
+        const remap = new Int32Array(vertCount)
+        remap.fill(-1)
+        const pos: number[] = []
+        const idx: number[] = []
+        for (let t = 0; t < model.triMaterials.length; t++) {
+          if (model.triMaterials[t] !== mi) continue
+          for (let k = 0; k < 3; k++) {
+            const vi = model.indices[t * 3 + k]
+            let local = remap[vi]
+            if (local < 0) {
+              local = pos.length / 3
+              remap[vi] = local
+              const o = vi * 3
+              pos.push(model.positions[o], model.positions[o + 1], model.positions[o + 2])
+            }
+            idx.push(local)
+          }
+        }
+        if (idx.length === 0) {
+          mats[mi].dispose()
+          continue
+        }
+        const geo = new THREE.BufferGeometry()
+        geo.setAttribute('position', new THREE.BufferAttribute(new Float32Array(pos), 3))
+        geo.setIndex(new THREE.BufferAttribute(new Uint32Array(idx), 1))
+        nextMeshes.push(new THREE.Mesh(geo, mats[mi]))
+      }
 
-    groups.forEach((idx, mi) => {
-      if (idx.length === 0) return
-      const geo = new THREE.BufferGeometry()
-      geo.setAttribute(
-        'position',
-        new THREE.BufferAttribute(model.positions, 3),
-      )
-      geo.setIndex(idx)
-      geo.computeVertexNormals()
-      const mesh = new THREE.Mesh(geo, mats[mi])
-      st.group.add(mesh)
-    })
+      const cx = model.extentMm.x
+      const cy = model.extentMm.y
+      const cz = model.extentMm.z
+      const dist = Math.max(cx, cy) * 1.35
+      cameraPos = [dist * 0.55, -dist * 0.85, dist * 0.55]
+      cameraTarget = [0, 0, cz * 0.35]
 
-    const cx = model.extentMm.x
-    const cy = model.extentMm.y
-    const cz = model.extentMm.z
-    const dist = Math.max(cx, cy) * 1.35
-    st.camera.position.set(dist * 0.55, -dist * 0.85, dist * 0.55)
-    st.controls.target.set(0, 0, cz * 0.35)
-
-    if (showNorth) {
-      const northY = cy / 2 + 8
-      const arrow = new THREE.ArrowHelper(
-        new THREE.Vector3(0, 1, 0),
-        new THREE.Vector3(0, northY - 14, cz + 2),
-        12,
-        0xe23b2f,
-        3.5,
-        2.5,
-      )
-      st.markers.add(arrow)
-      const canvas = document.createElement('canvas')
-      canvas.width = 128
-      canvas.height = 64
-      const ctx = canvas.getContext('2d')!
-      ctx.fillStyle = '#1c2420'
-      ctx.font = 'bold 48px Barlow Condensed, sans-serif'
-      ctx.textAlign = 'center'
-      ctx.fillText('N', 64, 48)
-      const tex = new THREE.CanvasTexture(canvas)
-      const sprite = new THREE.Sprite(
-        new THREE.SpriteMaterial({ map: tex, transparent: true }),
-      )
-      sprite.scale.set(10, 5, 1)
-      sprite.position.set(0, northY, cz + 6)
-      st.markers.add(sprite)
-    }
-
-    if (showScale) {
-      const barLen = Math.min(50, cx * 0.35)
-      const barGeo = new THREE.BoxGeometry(barLen, 1.2, 0.8)
-      const barMat = new THREE.MeshBasicMaterial({ color: 0x1c2420 })
-      const bar = new THREE.Mesh(barGeo, barMat)
-      bar.position.set(0, -cy / 2 - 6, 0.5)
-      st.markers.add(bar)
-      // ticks
-      for (const side of [-1, 1]) {
-        const tick = new THREE.Mesh(
-          new THREE.BoxGeometry(1.2, 3, 0.8),
-          barMat,
+      if (showNorth) {
+        const northY = cy / 2 + 8
+        nextMarkers.push(
+          new THREE.ArrowHelper(
+            new THREE.Vector3(0, 1, 0),
+            new THREE.Vector3(0, northY - 14, cz + 2),
+            12,
+            0xe23b2f,
+            3.5,
+            2.5,
+          ),
         )
-        tick.position.set((barLen / 2) * side, -cy / 2 - 6, 0.5)
-        st.markers.add(tick)
+        const canvas = document.createElement('canvas')
+        canvas.width = 128
+        canvas.height = 64
+        const ctx = canvas.getContext('2d')!
+        ctx.fillStyle = '#1c2420'
+        ctx.font = 'bold 48px Barlow Condensed, sans-serif'
+        ctx.textAlign = 'center'
+        ctx.fillText('N', 64, 48)
+        const tex = new THREE.CanvasTexture(canvas)
+        const sprite = new THREE.Sprite(
+          new THREE.SpriteMaterial({ map: tex, transparent: true }),
+        )
+        sprite.scale.set(10, 5, 1)
+        sprite.position.set(0, northY, cz + 6)
+        nextMarkers.push(sprite)
+      }
+
+      if (showScale) {
+        const barLen = Math.min(50, cx * 0.35)
+        const barGeo = new THREE.BoxGeometry(barLen, 1.2, 0.8)
+        const barMat = new THREE.MeshBasicMaterial({ color: 0x1c2420 })
+        const bar = new THREE.Mesh(barGeo, barMat)
+        bar.position.set(0, -cy / 2 - 6, 0.5)
+        nextMarkers.push(bar)
+        for (const side of [-1, 1]) {
+          const tick = new THREE.Mesh(new THREE.BoxGeometry(1.2, 3, 0.8), barMat)
+          tick.position.set((barLen / 2) * side, -cy / 2 - 6, 0.5)
+          nextMarkers.push(tick)
+        }
       }
     }
+
+    const oldMeshes = [...st.group.children]
+    const oldMarkers = [...st.markers.children]
+    for (const child of oldMeshes) st.group.remove(child)
+    for (const child of oldMarkers) st.markers.remove(child)
+    for (const mesh of nextMeshes) st.group.add(mesh)
+    for (const marker of nextMarkers) st.markers.add(marker)
+    if (cameraPos && cameraTarget) {
+      st.camera.position.set(cameraPos[0], cameraPos[1], cameraPos[2])
+      st.controls.target.set(cameraTarget[0], cameraTarget[1], cameraTarget[2])
+    }
+    for (const child of oldMeshes) disposeObject(child)
+    for (const child of oldMarkers) disposeObject(child)
   }, [model, showNorth, showScale])
 
   return <div className="preview-mount" ref={mountRef} aria-label="3D preview" />

@@ -1,4 +1,4 @@
-import type { Palette } from './palette'
+import type { Land, Palette } from './palette'
 
 /**
  * Published Bambu Lab spool colors.
@@ -24,6 +24,8 @@ export type ComboRole = {
   /** False for the route spool, so it is skipped in terrain matching. */
   terrain: boolean
   route?: boolean
+  /** Terrain class. Route slots leave this unset. */
+  land?: Land
 }
 
 export type ComboGroup = 'High country' | 'Woods' | 'Dry ground' | 'Water'
@@ -91,10 +93,11 @@ export function filamentById(id: string): BambuFilament {
   return filament
 }
 
-const terrain = (filamentId: string, role: string): ComboRole => ({
+const terrain = (filamentId: string, role: string, land: Land): ComboRole => ({
   filamentId,
   role,
   terrain: true,
+  land,
 })
 
 const route = (filamentId: string, role = 'Route line'): ComboRole => ({
@@ -113,18 +116,18 @@ export const ENVIRONMENT_COMBOS: EnvironmentCombo[] = [
     summary: 'Snow, glacier ice, and granite above the trees.',
     why: 'Above treeline the imagery splits into sunlit snow, blue glacier ice, and granite. Ivory White, Ice Blue, and Ash Gray are the matte spools on those three. Scarlet Red stays out of terrain matching, so the raised route stays red on snow and on stone.',
     whyExtended:
-      'The second AMS adds Charcoal for cliff shadow, Nardo Gray for mid-tone rock, Dark Blue for tarns, and Dark Green for krummholz. All eight spools are PLA Matte.',
+      'The second AMS adds Charcoal for cliff shadow, Dark Chocolate for talus, Marine Blue for tarns, and Dark Green for krummholz. All eight spools are PLA Matte.',
     core: [
-      terrain('ivory-white', 'Sunlit snow'),
-      terrain('ice-blue', 'Glaciers and tarns'),
-      terrain('ash-gray', 'Granite and scree'),
+      terrain('ivory-white', 'Sunlit snow', 'snow'),
+      terrain('ice-blue', 'Glacier ice', 'ice'),
+      terrain('ash-gray', 'Granite and scree', 'rock'),
       route('scarlet-red'),
     ],
     extra: [
-      terrain('charcoal', 'Cliff shadow'),
-      terrain('nardo-gray', 'Mid-tone rock'),
-      terrain('dark-blue', 'Deep lakes'),
-      terrain('dark-green', 'Krummholz'),
+      terrain('charcoal', 'Cliff shadow', 'shadow'),
+      terrain('dark-chocolate', 'Talus', 'soil'),
+      terrain('marine-blue', 'Tarns', 'water'),
+      terrain('dark-green', 'Krummholz', 'veg'),
     ],
   },
   {
@@ -132,20 +135,20 @@ export const ENVIRONMENT_COMBOS: EnvironmentCombo[] = [
     name: 'Tundra',
     group: 'High country',
     summary: 'Lichen, moss, and melt ponds on open ground.',
-    why: 'Tundra imagery is pale crust, low moss, and standing water. Desert Tan, Dark Green, and Ice Blue hold those three apart. Scarlet Red is the route.',
+    why: 'Tundra imagery is pale crust, low moss, and standing water. Desert Tan, Dark Green, and Marine Blue hold those three apart. Scarlet Red is the route.',
     whyExtended:
-      'A second AMS adds Ash Gray for gravel, Grass Green for wet sedge, Latte Brown for dry peat, and Charcoal for rock. The whole load is PLA Matte.',
+      'A second AMS adds Ash Gray for gravel, Grass Green for wet sedge, Dark Chocolate for dry peat, and Charcoal for rock. The whole load is PLA Matte.',
     core: [
-      terrain('desert-tan', 'Lichen ground'),
-      terrain('dark-green', 'Moss'),
-      terrain('ice-blue', 'Melt ponds'),
+      terrain('desert-tan', 'Lichen ground', 'sand'),
+      terrain('dark-green', 'Moss', 'veg'),
+      terrain('marine-blue', 'Melt ponds', 'water'),
       route('scarlet-red'),
     ],
     extra: [
-      terrain('ash-gray', 'Gravel bars'),
-      terrain('grass-green', 'Wet sedge'),
-      terrain('latte-brown', 'Dry peat'),
-      terrain('charcoal', 'Rock and shadow'),
+      terrain('ash-gray', 'Gravel bars', 'rock'),
+      terrain('grass-green', 'Wet sedge', 'veg'),
+      terrain('dark-chocolate', 'Dry peat', 'soil'),
+      terrain('charcoal', 'Rock and shadow', 'shadow'),
     ],
   },
   {
@@ -155,18 +158,18 @@ export const ENVIRONMENT_COMBOS: EnvironmentCombo[] = [
     summary: 'Snowpack with conifers still in the frame.',
     why: 'A snowed-in valley reads as white, blue shade, and dark spruce. Ivory White, Ice Blue, and Dark Green carry that. Scarlet Red marks the route across the snow.',
     whyExtended:
-      'The second AMS adds Charcoal for trunks, Ash Gray for frozen rock, Marine Blue for open water, and Dark Chocolate where the forest floor shows through. All eight are PLA Matte.',
+      'The second AMS adds Charcoal for trunks, Ash Gray for frozen rock, Marine Blue for open water, and Dark Chocolate where the forest floor shows through. All eight spools are PLA Matte.',
     core: [
-      terrain('ivory-white', 'Snow cover'),
-      terrain('ice-blue', 'Shaded snow'),
-      terrain('dark-green', 'Conifers'),
+      terrain('ivory-white', 'Snow cover', 'snow'),
+      terrain('ice-blue', 'Shaded snow', 'ice'),
+      terrain('dark-green', 'Conifers', 'veg'),
       route('scarlet-red'),
     ],
     extra: [
-      terrain('charcoal', 'Trunks and shade'),
-      terrain('ash-gray', 'Frozen rock'),
-      terrain('marine-blue', 'Open water'),
-      terrain('dark-chocolate', 'Forest floor'),
+      terrain('charcoal', 'Trunks and shade', 'shadow'),
+      terrain('ash-gray', 'Frozen rock', 'rock'),
+      terrain('marine-blue', 'Open water', 'water'),
+      terrain('dark-chocolate', 'Forest floor', 'soil'),
     ],
   },
   {
@@ -176,18 +179,18 @@ export const ENVIRONMENT_COMBOS: EnvironmentCombo[] = [
     summary: 'Closed canopy, meadows, and brown duff.',
     why: 'Forest tiles cluster into dark canopy, bright clearings, and soil. Dark Green, Grass Green, and Dark Chocolate separate those. Scarlet Red is reserved for the raised line.',
     whyExtended:
-      'Two AMS units add Apple Green for sunlit leaves, Caramel for dry grass, Bone White for rock, and Charcoal for deep shade. Every spool is PLA Matte.',
+      'Two AMS units add Lemon Yellow for sunlit leaves, Terracotta for dry grass, Bone White for rock, and Charcoal for deep shade. Every spool is PLA Matte.',
     core: [
-      terrain('dark-green', 'Closed canopy'),
-      terrain('grass-green', 'Meadows'),
-      terrain('dark-chocolate', 'Duff and soil'),
+      terrain('dark-green', 'Closed canopy', 'veg'),
+      terrain('grass-green', 'Meadows', 'veg'),
+      terrain('dark-chocolate', 'Duff and soil', 'soil'),
       route('scarlet-red'),
     ],
     extra: [
-      terrain('apple-green', 'Sunlit leaves'),
-      terrain('caramel', 'Dry grass'),
-      terrain('bone-white', 'Rock outcrops'),
-      terrain('charcoal', 'Deep shade'),
+      terrain('lemon-yellow', 'Sunlit leaves', 'sand'),
+      terrain('terracotta', 'Dry grass', 'soil'),
+      terrain('bone-white', 'Rock outcrops', 'rock'),
+      terrain('charcoal', 'Deep shade', 'shadow'),
     ],
   },
   {
@@ -195,20 +198,20 @@ export const ENVIRONMENT_COMBOS: EnvironmentCombo[] = [
     name: 'Autumn woodland',
     group: 'Woods',
     summary: 'Aspen yellow, maple rust, and dark trunks.',
-    why: 'Fall canopy is warm, so the route wants a cool spool. Lemon Yellow and Terracotta split the foliage, Dark Chocolate takes trunks and soil, and Cobalt Blue (PLA Basic) prints only the route.',
+    why: 'Fall canopy is warm, so the route wants a cool spool. Lemon Yellow and Mandarin Orange split the foliage, Dark Chocolate takes trunks and soil, and Cobalt Blue (PLA Basic) prints only the route.',
     whyExtended:
-      'The second AMS adds Mandarin Orange, Dark Red, Dark Green for conifers that stay green, and Bone White for birch bark.',
+      'The second AMS adds Apple Green for leaves that stay green, Charcoal for deep shade, Dark Green for conifers, and Bone White for birch bark.',
     core: [
-      terrain('lemon-yellow', 'Aspen and birch'),
-      terrain('terracotta', 'Oak and maple'),
-      terrain('dark-chocolate', 'Trunks and soil'),
+      terrain('lemon-yellow', 'Aspen and birch', 'sand'),
+      terrain('mandarin-orange', 'Maple and oak', 'soil'),
+      terrain('dark-chocolate', 'Trunks and soil', 'soil'),
       route('cobalt-blue'),
     ],
     extra: [
-      terrain('mandarin-orange', 'Mid-fall canopy'),
-      terrain('dark-red', 'Late maple'),
-      terrain('dark-green', 'Conifers'),
-      terrain('bone-white', 'Birch bark'),
+      terrain('apple-green', 'Lingering green', 'veg'),
+      terrain('charcoal', 'Deep shade', 'shadow'),
+      terrain('dark-green', 'Conifers', 'veg'),
+      terrain('bone-white', 'Birch bark', 'rock'),
     ],
   },
   {
@@ -216,20 +219,20 @@ export const ENVIRONMENT_COMBOS: EnvironmentCombo[] = [
     name: 'Desert canyon',
     group: 'Dry ground',
     summary: 'Sand, red rock, and shadowed walls.',
-    why: 'Canyon imagery steps from pale slickrock to red walls to brown shade. Desert Tan, Terracotta, and Dark Brown follow that ramp. Cobalt Blue is the route, a cool line against the warm stone.',
+    why: 'Canyon imagery steps from pale slickrock to red walls to black shade. Desert Tan, Terracotta, and Charcoal follow that ramp. Cobalt Blue is the route, a cool line against the warm stone.',
     whyExtended:
-      'A second AMS adds Latte Brown, Caramel, Dark Chocolate for slot canyons, and Turquoise (PLA Basic) for the river.',
+      'A second AMS adds Ash Gray for pale rock, Gold for bench slopes, Dark Chocolate for slot canyons, and Turquoise (PLA Basic) for the river. Gold is PLA Basic as well.',
     core: [
-      terrain('desert-tan', 'Sand and slickrock'),
-      terrain('terracotta', 'Red rock'),
-      terrain('dark-brown', 'Canyon shade'),
+      terrain('desert-tan', 'Sand and slickrock', 'sand'),
+      terrain('terracotta', 'Red rock', 'rock'),
+      terrain('charcoal', 'Canyon shade', 'shadow'),
       route('cobalt-blue'),
     ],
     extra: [
-      terrain('latte-brown', 'Pale sandstone'),
-      terrain('caramel', 'Bench slopes'),
-      terrain('dark-chocolate', 'Slot shadow'),
-      terrain('turquoise', 'River'),
+      terrain('ash-gray', 'Slickrock gray', 'rock'),
+      terrain('gold', 'Bench slopes', 'soil'),
+      terrain('dark-chocolate', 'Slot shadow', 'shadow'),
+      terrain('turquoise', 'River', 'water'),
     ],
   },
   {
@@ -237,20 +240,20 @@ export const ENVIRONMENT_COMBOS: EnvironmentCombo[] = [
     name: 'Badlands',
     group: 'Dry ground',
     summary: 'Pale strata, gold clay, and iron bands.',
-    why: 'Badland bands are lighter and more yellow than a red-rock canyon. Desert Tan and Gold take the sunlit strata, Terracotta takes the iron, and Cobalt Blue is the route.',
+    why: 'Badland bands are lighter and more yellow than a red-rock canyon. Desert Tan and Gold take the sunlit strata, Dark Red takes the iron, and Cobalt Blue is the route.',
     whyExtended:
-      'The second AMS fills in Caramel, Dark Brown, Dark Chocolate, and Charcoal so the gulches have a dark end to the ramp.',
+      'The second AMS fills in Caramel, Ash Gray, Dark Chocolate, and Charcoal so the gulches have a dark end to the ramp.',
     core: [
-      terrain('desert-tan', 'Pale strata'),
-      terrain('gold', 'Sunlit clay'),
-      terrain('terracotta', 'Iron bands'),
+      terrain('desert-tan', 'Pale strata', 'sand'),
+      terrain('gold', 'Sunlit clay', 'soil'),
+      terrain('dark-red', 'Iron bands', 'rock'),
       route('cobalt-blue'),
     ],
     extra: [
-      terrain('caramel', 'Mid slopes'),
-      terrain('dark-brown', 'Mudstone'),
-      terrain('dark-chocolate', 'Gulches'),
-      terrain('charcoal', 'Deep shade'),
+      terrain('caramel', 'Mid slopes', 'soil'),
+      terrain('ash-gray', 'Pale rock', 'rock'),
+      terrain('dark-chocolate', 'Gulches', 'shadow'),
+      terrain('charcoal', 'Deep shade', 'shadow'),
     ],
   },
   {
@@ -260,18 +263,18 @@ export const ENVIRONMENT_COMBOS: EnvironmentCombo[] = [
     summary: 'Basalt, ash, and cinder.',
     why: 'Volcanic ground is dark gray with rust-colored cinder. Charcoal, Nardo Gray, and Terracotta cover that, all matte. Magenta (PLA Basic) is the route, bright against basalt.',
     whyExtended:
-      'Two AMS units add Dark Chocolate, Mandarin Orange for young flows, Ash Gray for pumice, and Dark Brown for weathered rock.',
+      'Two AMS units add Dark Chocolate for old flows, Gold for young lava, Marine Blue for crater lakes, and Caramel for warm clay.',
     core: [
-      terrain('charcoal', 'Basalt'),
-      terrain('nardo-gray', 'Ash fields'),
-      terrain('terracotta', 'Cinder'),
+      terrain('charcoal', 'Basalt', 'shadow'),
+      terrain('nardo-gray', 'Ash fields', 'rock'),
+      terrain('terracotta', 'Cinder', 'soil'),
       route('magenta'),
     ],
     extra: [
-      terrain('dark-chocolate', 'Old flows'),
-      terrain('mandarin-orange', 'Young lava'),
-      terrain('ash-gray', 'Pumice'),
-      terrain('dark-brown', 'Weathered rock'),
+      terrain('dark-chocolate', 'Old flows', 'rock'),
+      terrain('gold', 'Young lava', 'soil'),
+      terrain('marine-blue', 'Crater lakes', 'water'),
+      terrain('caramel', 'Warm clay', 'soil'),
     ],
   },
   {
@@ -279,20 +282,20 @@ export const ENVIRONMENT_COMBOS: EnvironmentCombo[] = [
     name: 'Coast',
     group: 'Water',
     summary: 'Sand, shallows, and deep water.',
-    why: 'Shore tiles want a light sand and two distinct blues. Bone White, Ice Blue, and Marine Blue are that ladder, all PLA Matte. Scarlet Red is the route along the beach and the headlands.',
+    why: 'Shore tiles want a light sand and two distinct blues. Desert Tan, Ice Blue, and Marine Blue are that ladder, all PLA Matte. Scarlet Red is the route along the beach and the headlands.',
     whyExtended:
-      'The second AMS adds Dark Blue offshore, Ash Gray for rock, Grass Green for dune grass, and Charcoal for wet stone.',
+      'The second AMS adds Dark Blue offshore, Dark Chocolate for headland rock, Grass Green for dune grass, and Charcoal for wet stone.',
     core: [
-      terrain('bone-white', 'Sand'),
-      terrain('ice-blue', 'Shallows'),
-      terrain('marine-blue', 'Deep water'),
+      terrain('desert-tan', 'Sand', 'sand'),
+      terrain('ice-blue', 'Shallows', 'water'),
+      terrain('marine-blue', 'Deep water', 'water'),
       route('scarlet-red'),
     ],
     extra: [
-      terrain('dark-blue', 'Offshore'),
-      terrain('ash-gray', 'Headland rock'),
-      terrain('grass-green', 'Dune grass'),
-      terrain('charcoal', 'Wet rock'),
+      terrain('dark-blue', 'Offshore', 'water'),
+      terrain('dark-chocolate', 'Headland rock', 'rock'),
+      terrain('grass-green', 'Dune grass', 'veg'),
+      terrain('charcoal', 'Wet rock', 'shadow'),
     ],
   },
   {
@@ -300,20 +303,20 @@ export const ENVIRONMENT_COMBOS: EnvironmentCombo[] = [
     name: 'Tropical',
     group: 'Water',
     summary: 'Saturated canopy, turquoise water, and soil.',
-    why: 'Tropical imagery is more saturated than a temperate forest. Bambu Green and Turquoise (both PLA Basic) hold canopy and reef water, Cocoa Brown takes soil, and Yellow prints the route.',
+    why: 'Tropical imagery is more saturated than a temperate forest. Bambu Green and Turquoise (both PLA Basic) hold canopy and reef water, Dark Chocolate takes soil, and Yellow prints the route.',
     whyExtended:
-      'A second AMS adds Mistletoe Green for shaded canopy, Grass Green for clearings, Desert Tan for beach, and Marine Blue for deep water.',
+      'A second AMS adds Dark Green for shaded canopy, Desert Tan for beach, Ash Gray for headland rock, and Charcoal for jungle shade.',
     core: [
-      terrain('bambu-green', 'Canopy'),
-      terrain('turquoise', 'Rivers and reef'),
-      terrain('cocoa-brown', 'Soil'),
+      terrain('bambu-green', 'Canopy', 'veg'),
+      terrain('turquoise', 'Rivers and reef', 'water'),
+      terrain('dark-chocolate', 'Soil', 'soil'),
       route('yellow'),
     ],
     extra: [
-      terrain('mistletoe-green', 'Shaded canopy'),
-      terrain('grass-green', 'Clearings'),
-      terrain('desert-tan', 'Beach'),
-      terrain('marine-blue', 'Deep water'),
+      terrain('dark-green', 'Shade canopy', 'veg'),
+      terrain('desert-tan', 'Beach', 'sand'),
+      terrain('ash-gray', 'Headland rock', 'rock'),
+      terrain('charcoal', 'Jungle shade', 'shadow'),
     ],
   },
 ]
@@ -334,12 +337,14 @@ export function comboToPalette(combo: EnvironmentCombo, units: AmsUnits): Palett
     name: `${combo.name} · Bambu`,
     colors: slots.map((slot) => {
       const filament = filamentById(slot.filamentId)
-      return {
+      const color: Palette['colors'][number] = {
         name: filament.name,
         hex: filament.hex,
         enabled: slot.terrain,
         note: slot.role,
       }
+      if (slot.land) color.land = slot.land
+      return color
     }),
   }
 }

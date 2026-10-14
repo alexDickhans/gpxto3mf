@@ -1,3 +1,13 @@
+export type Land =
+  | 'snow'
+  | 'ice'
+  | 'rock'
+  | 'shadow'
+  | 'veg'
+  | 'soil'
+  | 'water'
+  | 'sand'
+
 export type PaletteColor = {
   name: string
   hex: string
@@ -5,6 +15,8 @@ export type PaletteColor = {
   enabled?: boolean
   /** Short job for this spool, such as "Sunlit snow". */
   note?: string
+  /** Terrain class this spool is meant to win. Absent on route slots and custom palettes. */
+  land?: Land
 }
 export type Palette = { name: string; colors: PaletteColor[] }
 
@@ -152,6 +164,84 @@ export function nearestPaletteIndex(
     const d = deltaE76(lab, paletteLabs[i])
     if (d < bestD) {
       bestD = d
+      best = i
+    }
+  }
+  return best
+}
+
+/**
+ * Ice before water before snow. Bright yellows are sand before vegetation
+ * so aspen and sulfur are not eaten by a green spool.
+ */
+function classifyLand(lab: [number, number, number], elev01: number): Land {
+  const L = lab[0]
+  const a = lab[1]
+  const b = lab[2]
+  const chroma = Math.hypot(a, b)
+  if (elev01 > 0.55 && b < -4 && a < 6 && L > 40 && L < 96) return 'ice'
+  if (b < -8 && a < 2 && L < 90 && elev01 < 0.75) return 'water'
+  if (elev01 > 0.72 && L > 62 && chroma < 18 && b > -8) return 'snow'
+  if (b > 55 && L > 68) return 'sand'
+  if (a > 18 && b > 20 && L < 88) return 'soil'
+  if (a < -6 && b > -8 && chroma > 8) return 'veg'
+  if (L < 20 && chroma < 14) return 'shadow'
+  if (b > 18 && L > 70 && a > -10) return 'sand'
+  if (a >= 8 && b > 12 && L < 78) return 'soil'
+  return 'rock'
+}
+
+/**
+ * Land-aware terrain match. Spools with no land (custom palettes, DEFAULT_PALETTE)
+ * fall back to nearest Lab. When the pixel's class has a spool, only those
+ * spools compete, so a closer wrong land cannot steal the pixel.
+ */
+export function matchTerrainCell(
+  rgb: [number, number, number],
+  elev01: number,
+  paletteLabs: [number, number, number][],
+  lands: (Land | undefined)[],
+): number {
+  let anyLand = false
+  for (let i = 0; i < lands.length; i++) {
+    if (lands[i] !== undefined) {
+      anyLand = true
+      break
+    }
+  }
+  if (!anyLand) return nearestPaletteIndex(rgb, paletteLabs)
+
+  const lab = rgbToLab(rgb[0], rgb[1], rgb[2])
+  const want = classifyLand(lab, elev01)
+  return closestLandScore(lab, paletteLabs, lands, want)
+}
+
+function closestLandScore(
+  lab: [number, number, number],
+  paletteLabs: [number, number, number][],
+  lands: (Land | undefined)[],
+  want: Land,
+): number {
+  const Lp = lab[0]
+  const ap = lab[1]
+  const bp = lab[2]
+  let restricted = false
+  for (let i = 0; i < lands.length; i++) {
+    if (lands[i] === want) {
+      restricted = true
+      break
+    }
+  }
+  let best = 0
+  let bestScore = Infinity
+  for (let i = 0; i < paletteLabs.length; i++) {
+    if (restricted && lands[i] !== want) continue
+    const filament = paletteLabs[i]
+    const score =
+      Math.abs(Lp - filament[0]) * 1.35 +
+      Math.hypot(ap - filament[1], bp - filament[2]) * 0.45
+    if (score < bestScore) {
+      bestScore = score
       best = i
     }
   }

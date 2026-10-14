@@ -21,7 +21,7 @@ import { downloadBlob, export3mf } from './lib/export3mf'
 import './App.css'
 
 const START_COMBO = comboById('high-alpine')
-const START_UNITS = 1 as const
+const START_UNITS = 2 as const
 const START_PALETTE = comboToPalette(START_COMBO, START_UNITS)
 const START_ROUTE = routeIndexFor(START_COMBO, START_UNITS)
 
@@ -54,8 +54,10 @@ function App() {
     `${START_COMBO.name} · ${START_PALETTE.colors.length} Bambu spools · ${START_PALETTE.colors[START_ROUTE].name} is the route`,
   )
   const [busy, setBusy] = useState(false)
+  const [previewOnly, setPreviewOnly] = useState(false)
   const [trackName, setTrackName] = useState<string | null>(null)
   const gpxTextRef = useRef<string | null>(null)
+  const buildGen = useRef(0)
   const gpxInputRef = useRef<HTMLInputElement>(null)
   const paletteInputRef = useRef<HTMLInputElement>(null)
 
@@ -67,6 +69,7 @@ function App() {
       controlOverride?: ControlValues,
     ) => {
       const c = controlOverride ?? controls
+      const gen = ++buildGen.current
       setBusy(true)
       try {
         const result = await runPipeline(
@@ -84,10 +87,23 @@ function App() {
             routeColorIndex: routeIdx,
             imagerySeason: c.imagerySeason,
           },
-          (msg) => setStatus(msg),
+          (msg) => {
+            if (buildGen.current === gen) setStatus(msg)
+          },
+          async (coarse) => {
+            if (buildGen.current !== gen) throw new Error('stale build')
+            setModel(coarse)
+            setPreviewOnly(true)
+            await new Promise((resolve) => {
+              setTimeout(resolve, 0)
+            })
+            if (buildGen.current !== gen) throw new Error('stale build')
+          },
         )
+        if (buildGen.current !== gen) return
         startTransition(() => {
           setModel(result.model)
+          setPreviewOnly(false)
           setTrackName(result.track.name)
           setRouteColorIndex(result.routeColorIndex)
           const seasonNote = result.imageryLabel ? ` · ${result.imageryLabel}` : ''
@@ -96,11 +112,12 @@ function App() {
           )
         })
       } catch (err) {
+        if (buildGen.current !== gen) return
         const msg = err instanceof Error ? err.message : 'Build failed'
         setStatus(msg)
         console.error(err)
       } finally {
-        setBusy(false)
+        if (buildGen.current === gen) setBusy(false)
       }
     },
     [controls],
@@ -230,7 +247,7 @@ function App() {
           <button
             type="button"
             className="btn"
-            disabled={busy || !model}
+            disabled={busy || !model || previewOnly}
             onClick={() => void onDownload()}
           >
             Download 3MF

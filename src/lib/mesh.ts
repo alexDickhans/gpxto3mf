@@ -3,7 +3,7 @@ import type { ColorGrid } from './imagery'
 import {
   enabledColorIndices,
   hexToLab,
-  nearestPaletteIndex,
+  matchTerrainCell,
   type Palette,
 } from './palette'
 import { toLocalMeters, type LatLon } from './geo'
@@ -41,78 +41,239 @@ export type BuildOptions = {
   skirtMm?: number
 }
 
-/** Sample color grid onto mesh resolution (handles mismatched fetch sizes). */
-function sampleColorAt(
-  colors: ColorGrid,
+/** Long side of the height grid that is actually meshed. Fetch may be larger. */
+export const MESH_GRID_MAX = 192
+
+const COLOR_MATCH_MAX = 512
+
+function scaledSize(
+  srcCols: number,
+  srcRows: number,
+  maxLong: number,
+  minSide: number,
+): { cols: number; rows: number } | null {
+  const long = Math.max(srcCols, srcRows)
+  if (long <= maxLong) return null
+  if (srcCols >= srcRows) {
+    return {
+      cols: maxLong,
+      rows: Math.max(minSide, Math.round((srcRows * maxLong) / srcCols)),
+    }
+  }
+  return {
+    rows: maxLong,
+    cols: Math.max(minSide, Math.round((srcCols * maxLong) / srcRows)),
+  }
+}
+
+export function downsampleHeightGrid(height: HeightGrid, maxLong: number): HeightGrid {
+  const size = scaledSize(height.cols, height.rows, maxLong, 8)
+  if (!size) return height
+  const { cols, rows } = size
+  const heights = new Float32Array(cols * rows)
+  let minH = Infinity
+  let maxH = -Infinity
+  for (let j = 0; j < rows; j++) {
+    const y0 = Math.floor((j * height.rows) / rows)
+    const y1 = Math.max(y0 + 1, Math.floor(((j + 1) * height.rows) / rows))
+    for (let i = 0; i < cols; i++) {
+      const x0 = Math.floor((i * height.cols) / cols)
+      const x1 = Math.max(x0 + 1, Math.floor(((i + 1) * height.cols) / cols))
+      let sum = 0
+      let n = 0
+      for (let y = y0; y < y1; y++) {
+        const row = y * height.cols
+        for (let x = x0; x < x1; x++) {
+          sum += height.heights[row + x]
+          n++
+        }
+      }
+      const h = sum / n
+      heights[j * cols + i] = h
+      if (h < minH) minH = h
+      if (h > maxH) maxH = h
+    }
+  }
+  return {
+    cols,
+    rows,
+    heights,
+    bbox: height.bbox,
+    widthM: height.widthM,
+    heightM: height.heightM,
+    minH,
+    maxH,
+  }
+}
+
+export function downsampleColorGrid(colors: ColorGrid, maxLong: number): ColorGrid {
+  const size = scaledSize(colors.cols, colors.rows, maxLong, 2)
+  if (!size) return colors
+  const { cols, rows } = size
+  const rgb = new Uint8Array(cols * rows * 3)
+  for (let j = 0; j < rows; j++) {
+    const y0 = Math.floor((j * colors.rows) / rows)
+    const y1 = Math.max(y0 + 1, Math.floor(((j + 1) * colors.rows) / rows))
+    for (let i = 0; i < cols; i++) {
+      const x0 = Math.floor((i * colors.cols) / cols)
+      const x1 = Math.max(x0 + 1, Math.floor(((i + 1) * colors.cols) / cols))
+      let r = 0
+      let g = 0
+      let b = 0
+      let n = 0
+      for (let y = y0; y < y1; y++) {
+        for (let x = x0; x < x1; x++) {
+          const o = (y * colors.cols + x) * 3
+          r += colors.rgb[o]
+          g += colors.rgb[o + 1]
+          b += colors.rgb[o + 2]
+          n++
+        }
+      }
+      const o = (j * cols + i) * 3
+      rgb[o] = Math.round(r / n)
+      rgb[o + 1] = Math.round(g / n)
+      rgb[o + 2] = Math.round(b / n)
+    }
+  }
+  return { cols, rows, rgb, label: colors.label }
+}
+
+function sampleElev01(
+  heights: Float32Array,
+  cols: number,
+  rows: number,
+  minH: number,
+  maxH: number,
   u: number,
   v: number,
-): [number, number, number] {
-  const x = Math.max(0, Math.min(colors.cols - 1, u * (colors.cols - 1)))
-  const y = Math.max(0, Math.min(colors.rows - 1, v * (colors.rows - 1)))
-  const i0 = Math.max(0, Math.min(colors.cols - 2, Math.floor(x)))
-  const j0 = Math.max(0, Math.min(colors.rows - 2, Math.floor(y)))
+): number {
+  const span = maxH - minH
+  if (!(span > 0) || cols < 1 || rows < 1) return 0
+  const x = Math.max(0, Math.min(cols - 1, u * Math.max(0, cols - 1)))
+  const y = Math.max(0, Math.min(rows - 1, v * Math.max(0, rows - 1)))
+  const i0 = Math.min(cols - 1, Math.floor(x))
+  const j0 = Math.min(rows - 1, Math.floor(y))
+  const i1 = Math.min(cols - 1, i0 + 1)
+  const j1 = Math.min(rows - 1, j0 + 1)
   const fx = x - i0
   const fy = y - j0
-  const pix = (i: number, j: number) => {
-    const o = (j * colors.cols + i) * 3
-    return [colors.rgb[o], colors.rgb[o + 1], colors.rgb[o + 2]] as const
-  }
-  const c00 = pix(i0, j0)
-  const c10 = pix(i0 + 1, j0)
-  const c01 = pix(i0, j0 + 1)
-  const c11 = pix(i0 + 1, j0 + 1)
-  const out: [number, number, number] = [0, 0, 0]
-  for (let k = 0; k < 3; k++) {
-    out[k] =
-      c00[k] * (1 - fx) * (1 - fy) +
-      c10[k] * fx * (1 - fy) +
-      c01[k] * (1 - fx) * fy +
-      c11[k] * fx * fy
-  }
-  return out
+  const h00 = heights[j0 * cols + i0]
+  const h10 = heights[j0 * cols + i1]
+  const h01 = heights[j1 * cols + i0]
+  const h11 = heights[j1 * cols + i1]
+  const h =
+    h00 * (1 - fx) * (1 - fy) +
+    h10 * fx * (1 - fy) +
+    h01 * (1 - fx) * fy +
+    h11 * fx * fy
+  const elev = (h - minH) / span
+  if (elev < 0) return 0
+  if (elev > 1) return 1
+  return elev
 }
 
 export function buildTerrainModel(
-  height: HeightGrid,
-  colors: ColorGrid,
+  heightIn: HeightGrid,
+  colorsIn: ColorGrid,
   palette: Palette,
   track: LatLon[],
   opts: BuildOptions,
 ): TerrainModel {
   const baseThicknessMm = opts.baseThicknessMm ?? 2.5
-  const { cols, rows, heights, widthM, heightM, minH, bbox } = height
+  const height = downsampleHeightGrid(heightIn, MESH_GRID_MAX)
+  const colors = downsampleColorGrid(colorsIn, COLOR_MATCH_MAX)
+  const { cols, rows, heights, widthM, heightM, minH, maxH, bbox } = height
 
   const longestM = Math.max(widthM, heightM)
   const scale = opts.bedSizeMm / longestM // mm per meter of ground
 
   const activeIdxs = enabledColorIndices(palette)
   const paletteLabs = activeIdxs.map((i) => hexToLab(palette.colors[i].hex))
+  const lands = activeIdxs.map((i) => palette.colors[i].land)
 
-  // Cell material from colors resampled onto this mesh grid
+  const qCols = colors.cols
+  const qRows = colors.rows
+  const matched = new Uint16Array(qCols * qRows)
+  for (let j = 0; j < qRows; j++) {
+    const v = qRows <= 1 ? 0.5 : j / (qRows - 1)
+    for (let i = 0; i < qCols; i++) {
+      const u = qCols <= 1 ? 0.5 : i / (qCols - 1)
+      const o = (j * qCols + i) * 3
+      const local = matchTerrainCell(
+        [colors.rgb[o], colors.rgb[o + 1], colors.rgb[o + 2]],
+        sampleElev01(heights, cols, rows, minH, maxH, u, v),
+        paletteLabs,
+        lands,
+      )
+      matched[j * qCols + i] = activeIdxs[local]
+    }
+  }
+
   const cellW = cols - 1
   const cellH = rows - 1
   let cellMat = new Uint16Array(cellW * cellH)
+  const histSize = Math.max(1, palette.colors.length)
+  const hist = new Uint32Array(histSize)
+  const histTouched: number[] = []
+  let voteBest = 0
+  let voteN = 0
+  const beginVote = () => {
+    histTouched.length = 0
+    voteBest = 0
+    voteN = 0
+  }
+  const addVote = (v: number) => {
+    const n = ++hist[v]
+    if (n === 1) histTouched.push(v)
+    if (n > voteN || (n === voteN && v < voteBest)) {
+      voteN = n
+      voteBest = v
+    }
+  }
+  const endVote = () => {
+    const result = voteBest
+    for (let t = 0; t < histTouched.length; t++) hist[histTouched[t]] = 0
+    return result
+  }
+  const colorCoarser = qCols < cols || qRows < rows
+
   for (let j = 0; j < cellH; j++) {
+    const v0 = rows <= 1 ? 0 : j / (rows - 1)
+    const v1 = rows <= 1 ? 1 : (j + 1) / (rows - 1)
+    let cj0 = Math.floor(v0 * qRows)
+    let cj1 = Math.ceil(v1 * qRows)
+    if (cj0 < 0) cj0 = 0
+    if (cj0 > qRows - 1) cj0 = qRows - 1
+    if (cj1 < cj0 + 1) cj1 = cj0 + 1
+    if (cj1 > qRows) cj1 = qRows
     for (let i = 0; i < cellW; i++) {
-      const samples = [
-        [i, j],
-        [i + 1, j],
-        [i, j + 1],
-        [i + 1, j + 1],
-      ] as const
-      let r = 0
-      let g = 0
-      let b = 0
-      for (const [ci, cj] of samples) {
-        const u = cols <= 1 ? 0 : ci / (cols - 1)
-        const v = rows <= 1 ? 0 : cj / (rows - 1)
-        const c = sampleColorAt(colors, u, v)
-        r += c[0]
-        g += c[1]
-        b += c[2]
+      const u0 = cols <= 1 ? 0 : i / (cols - 1)
+      const u1 = cols <= 1 ? 1 : (i + 1) / (cols - 1)
+      let ci0 = Math.floor(u0 * qCols)
+      let ci1 = Math.ceil(u1 * qCols)
+      if (ci0 < 0) ci0 = 0
+      if (ci0 > qCols - 1) ci0 = qCols - 1
+      if (ci1 < ci0 + 1) ci1 = ci0 + 1
+      if (ci1 > qCols) ci1 = qCols
+      beginVote()
+      for (let cj = cj0; cj < cj1; cj++) {
+        const row = cj * qCols
+        for (let ci = ci0; ci < ci1; ci++) addVote(matched[row + ci])
       }
-      const local = nearestPaletteIndex([r / 4, g / 4, b / 4], paletteLabs)
-      cellMat[j * cellW + i] = activeIdxs[local]
+      if (colorCoarser) {
+        const corners = [u0, v0, u1, v0, u0, v1, u1, v1]
+        for (let k = 0; k < 4; k++) {
+          let x = Math.round(corners[k * 2] * (qCols - 1))
+          let y = Math.round(corners[k * 2 + 1] * (qRows - 1))
+          if (x < 0) x = 0
+          if (x > qCols - 1) x = qCols - 1
+          if (y < 0) y = 0
+          if (y > qRows - 1) y = qRows - 1
+          addVote(matched[y * qCols + x])
+        }
+      }
+      cellMat[j * cellW + i] = endVote()
     }
   }
 
@@ -180,10 +341,9 @@ export function buildTerrainModel(
     return baseThicknessMm + (z - baseThicknessMm) * factor
   }
 
-  // Regular grid in local meters — avoids lat/lon re-projection jitter per vertex
   const topCount = cols * rows
   const vertCount = topCount * 2
-  const positions = new Float32Array(vertCount * 3)
+  const gridPos = new Float32Array(vertCount * 3)
 
   for (let j = 0; j < rows; j++) {
     const v = rows <= 1 ? 0.5 : j / (rows - 1)
@@ -194,31 +354,45 @@ export function buildTerrainModel(
       const h = heights[j * cols + i]
       const zm = surfaceZ(xm, ym, h)
       const ti = (j * cols + i) * 3
-      positions[ti] = xm
-      positions[ti + 1] = ym
-      positions[ti + 2] = zm
+      gridPos[ti] = xm
+      gridPos[ti + 1] = ym
+      gridPos[ti + 2] = zm
       const bi = (topCount + j * cols + i) * 3
-      positions[bi] = xm
-      positions[bi + 1] = ym
-      positions[bi + 2] = 0
+      gridPos[bi] = xm
+      gridPos[bi + 1] = ym
+      gridPos[bi + 2] = 0
     }
   }
 
-  // Expandable vertex buffer (terrain first, route appended)
-  const posList = Array.from(positions)
-  const indices: number[] = []
-  const triMaterials: number[] = []
+  let posBuf = new Float32Array(Math.max(1024, vertCount * 3))
+  let posLen = 0
+  const pushV = (x: number, y: number, z: number) => {
+    if (posLen + 3 > posBuf.length) {
+      const next = new Float32Array(posBuf.length * 2)
+      next.set(posBuf)
+      posBuf = next
+    }
+    const id = posLen / 3
+    posBuf[posLen++] = x
+    posBuf[posLen++] = y
+    posBuf[posLen++] = z
+    return id
+  }
 
+  let indexCap = Math.max(64, cellW * cellH * 12 + 20_000)
+  let indexBuf = new Uint32Array(indexCap * 3)
+  let triBuf = new Uint16Array(indexCap)
+  let triCount = 0
   const addTri = (a: number, b: number, c: number, mat: number) => {
-    const ax = posList[a * 3]
-    const ay = posList[a * 3 + 1]
-    const az = posList[a * 3 + 2]
-    const bx = posList[b * 3]
-    const by = posList[b * 3 + 1]
-    const bz = posList[b * 3 + 2]
-    const cx = posList[c * 3]
-    const cy = posList[c * 3 + 1]
-    const cz = posList[c * 3 + 2]
+    const ax = posBuf[a * 3]
+    const ay = posBuf[a * 3 + 1]
+    const az = posBuf[a * 3 + 2]
+    const bx = posBuf[b * 3]
+    const by = posBuf[b * 3 + 1]
+    const bz = posBuf[b * 3 + 2]
+    const cx = posBuf[c * 3]
+    const cy = posBuf[c * 3 + 1]
+    const cz = posBuf[c * 3 + 2]
     if (![ax, ay, az, bx, by, bz, cx, cy, cz].every(Number.isFinite)) return
     const abx = bx - ax
     const aby = by - ay
@@ -230,14 +404,21 @@ export function buildTerrainModel(
     const ny = abz * acx - abx * acz
     const nz = abx * acy - aby * acx
     if (nx * nx + ny * ny + nz * nz < 1e-12) return
-    indices.push(a, b, c)
-    triMaterials.push(mat)
-  }
-
-  const pushV = (x: number, y: number, z: number) => {
-    const i = posList.length / 3
-    posList.push(x, y, z)
-    return i
+    if (triCount >= indexCap) {
+      indexCap *= 2
+      const nextI = new Uint32Array(indexCap * 3)
+      nextI.set(indexBuf)
+      indexBuf = nextI
+      const nextT = new Uint16Array(indexCap)
+      nextT.set(triBuf)
+      triBuf = nextT
+    }
+    const o = triCount * 3
+    indexBuf[o] = a
+    indexBuf[o + 1] = b
+    indexBuf[o + 2] = c
+    triBuf[triCount] = mat
+    triCount++
   }
 
   // Face-connected regions of one color. Regions that only meet at a corner
@@ -257,9 +438,7 @@ export function buildTerrainModel(
       const cur = stack.pop()!
       const cj = Math.floor(cur / cellW)
       const ci = cur - cj * cellW
-      const neighbors = [
-        ci - 1, cj, ci + 1, cj, ci, cj - 1, ci, cj + 1,
-      ]
+      const neighbors = [ci - 1, cj, ci + 1, cj, ci, cj - 1, ci, cj + 1]
       for (let n = 0; n < neighbors.length; n += 2) {
         const ni = neighbors[n]
         const nj = neighbors[n + 1]
@@ -272,14 +451,29 @@ export function buildTerrainModel(
     }
   }
 
+  const compCounts = new Uint32Array(compCount)
+  for (let k = 0; k < cellComp.length; k++) compCounts[cellComp[k]]++
+  const compStart = new Uint32Array(compCount)
+  let compFilled = 0
+  for (let c = 0; c < compCount; c++) {
+    compStart[c] = compFilled
+    compFilled += compCounts[c]
+  }
+  const compCells = new Int32Array(cellComp.length)
+  const compCursor = new Uint32Array(compStart)
+  for (let k = 0; k < cellComp.length; k++) {
+    const c = cellComp[k]
+    compCells[compCursor[c]++] = k
+  }
+
   const smoothX = new Float32Array(topCount)
   const smoothY = new Float32Array(topCount)
   for (let j = 0; j < rows; j++) {
     for (let i = 0; i < cols; i++) {
       const vi = j * cols + i
       const o = vi * 3
-      smoothX[vi] = positions[o]
-      smoothY[vi] = positions[o + 1]
+      smoothX[vi] = gridPos[o]
+      smoothY[vi] = gridPos[o + 1]
     }
   }
   smoothColorBoundary(
@@ -291,15 +485,16 @@ export function buildTerrainModel(
     opts.colorEdgeSmooth ?? 0.75,
   )
 
-  const vertOf = new Map<number, number>()
-  const corner = (gridIndex: number, component: number) => {
-    const key = component * vertCount + gridIndex
-    const found = vertOf.get(key)
-    if (found !== undefined) return found
+  // 0 means unset. Stored value is vertex id + 1. Cleared per component.
+  const remap = new Int32Array(vertCount)
+  const touched: number[] = []
+  const corner = (gridIndex: number) => {
+    const slot = remap[gridIndex]
+    if (slot !== 0) return slot - 1
     const column = gridIndex >= topCount ? gridIndex - topCount : gridIndex
-    const o = gridIndex * 3
-    const id = pushV(smoothX[column], smoothY[column], posList[o + 2])
-    vertOf.set(key, id)
+    const id = pushV(smoothX[column], smoothY[column], gridPos[gridIndex * 3 + 2])
+    remap[gridIndex] = id + 1
+    touched.push(gridIndex)
     return id
   }
 
@@ -312,18 +507,22 @@ export function buildTerrainModel(
     return cellMat[nj * cellW + ni] === cellMat[j * cellW + i]
   }
 
-  for (let j = 0; j < cellH; j++) {
-    for (let i = 0; i < cellW; i++) {
-      const mat = terrainToMat.get(cellMat[j * cellW + i]) ?? 0
-      const component = cellComp[j * cellW + i]
-      const a = corner(topOf(i, j), component)
-      const b = corner(topOf(i + 1, j), component)
-      const c = corner(topOf(i, j + 1), component)
-      const d = corner(topOf(i + 1, j + 1), component)
-      const aB = corner(botOf(i, j), component)
-      const bB = corner(botOf(i + 1, j), component)
-      const cB = corner(botOf(i, j + 1), component)
-      const dB = corner(botOf(i + 1, j + 1), component)
+  for (let comp = 0; comp < compCount; comp++) {
+    const begin = compStart[comp]
+    const end = begin + compCounts[comp]
+    for (let n = begin; n < end; n++) {
+      const cell = compCells[n]
+      const j = Math.floor(cell / cellW)
+      const i = cell - j * cellW
+      const mat = terrainToMat.get(cellMat[cell]) ?? 0
+      const a = corner(topOf(i, j))
+      const b = corner(topOf(i + 1, j))
+      const c = corner(topOf(i, j + 1))
+      const d = corner(topOf(i + 1, j + 1))
+      const aB = corner(botOf(i, j))
+      const bB = corner(botOf(i + 1, j))
+      const cB = corner(botOf(i, j + 1))
+      const dB = corner(botOf(i + 1, j + 1))
 
       addTri(a, b, d, mat)
       addTri(a, d, c, mat)
@@ -339,6 +538,8 @@ export function buildTerrainModel(
       if (!sameColor(i, j, i, j + 1)) wall(d, c, dB, cB)
       if (!sameColor(i, j, i - 1, j)) wall(c, a, cB, aB)
     }
+    for (let t = 0; t < touched.length; t++) remap[touched[t]] = 0
+    touched.length = 0
   }
 
   // Route — closed rectangular tube seated on the triangulated surface.
@@ -356,7 +557,7 @@ export function buildTerrainModel(
     const j0 = Math.floor(gy)
     const fx = gx - i0
     const fy = gy - j0
-    const zAt = (ci: number, cj: number) => positions[(cj * cols + ci) * 3 + 2]
+    const zAt = (ci: number, cj: number) => gridPos[(cj * cols + ci) * 3 + 2]
     const z00 = zAt(i0, j0)
     const z10 = zAt(i0 + 1, j0)
     const z01 = zAt(i0, j0 + 1)
@@ -376,11 +577,7 @@ export function buildTerrainModel(
     routeRaw.push({ x: xm, y: ym })
   }
 
-  const cellMm = Math.min(
-    spanX / Math.max(1, cols - 1),
-    spanY / Math.max(1, rows - 1),
-  )
-  let pts = resamplePolyline(routeRaw, Math.max(0.35, cellMm * 0.85), 8000)
+  let pts = resamplePolyline(routeRaw, Math.max(1.2, opts.routeWidthMm), 1500)
 
   let routeClosed = false
   if (pts.length >= 3) {
@@ -400,8 +597,7 @@ export function buildTerrainModel(
     for (let i = 0; i < nPts; i++) {
       const p = pts[i]
       const p0 = pts[routeClosed ? (i - 1 + nPts) % nPts : Math.max(0, i - 1)]
-      const p1 =
-        pts[routeClosed ? (i + 1) % nPts : Math.min(nPts - 1, i + 1)]
+      const p1 = pts[routeClosed ? (i + 1) % nPts : Math.min(nPts - 1, i + 1)]
       let dx = p1.x - p0.x
       let dy = p1.y - p0.y
       let len = Math.hypot(dx, dy)
@@ -442,10 +638,8 @@ export function buildTerrainModel(
     for (let i = 0; i < rings.length - 1; i++) link(rings[i], rings[i + 1])
 
     if (routeClosed) {
-      // Torus join — no caps needed
       link(rings[rings.length - 1], rings[0])
     } else {
-      // End caps close the tube (were missing → open non-manifold mesh)
       const s = rings[0]
       const e = rings[rings.length - 1]
       addTri(s.bl, s.br, s.tr, m)
@@ -456,9 +650,9 @@ export function buildTerrainModel(
   }
 
   const usageCounts = materials.map(() => 0)
-  for (const tm of triMaterials) usageCounts[tm]++
+  for (let t = 0; t < triCount; t++) usageCounts[triBuf[t]]++
 
-  const finalPositions = new Float32Array(posList)
+  const finalPositions = posBuf.slice(0, posLen)
   let minX = Infinity
   let maxX = -Infinity
   let minY = Infinity
@@ -476,8 +670,8 @@ export function buildTerrainModel(
 
   return {
     positions: finalPositions,
-    indices: new Uint32Array(indices),
-    triMaterials: new Uint16Array(triMaterials),
+    indices: indexBuf.slice(0, triCount * 3),
+    triMaterials: triBuf.slice(0, triCount),
     materials,
     usageCounts,
     extentMm: { x: maxX - minX, y: maxY - minY, z: maxZ - minZ },
@@ -496,8 +690,7 @@ function resamplePolyline(
   for (let i = 1; i < points.length; i++) {
     const prev = cumulative[i - 1]
     cumulative.push(
-      prev +
-        Math.hypot(points[i].x - points[i - 1].x, points[i].y - points[i - 1].y),
+      prev + Math.hypot(points[i].x - points[i - 1].x, points[i].y - points[i - 1].y),
     )
   }
   const length = cumulative[cumulative.length - 1]
