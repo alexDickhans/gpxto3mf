@@ -55,11 +55,13 @@ export function PaletteStrip({
                 <span className="swatch-count">
                   {isRoute && !on
                     ? 'route'
-                    : materials
-                      ? count > 0
-                        ? count.toLocaleString()
-                        : '—'
-                      : 'AMS'}
+                    : count > 0
+                      ? count.toLocaleString()
+                      : c.note
+                        ? c.note
+                        : materials
+                          ? '—'
+                          : 'ready'}
                 </span>
               </span>
             </button>

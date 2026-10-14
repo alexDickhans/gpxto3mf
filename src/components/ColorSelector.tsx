@@ -166,10 +166,27 @@ function ComboCard({
         {combo.featured ? <span className="combo-tag">Above treeline</span> : null}
       </span>
       <span className="combo-card-summary">{combo.summary}</span>
-      <SpoolGrid label="First AMS" slots={core} />
-      {extra.length > 0 ? <SpoolGrid label="Second AMS" slots={extra} /> : null}
-      <span className="combo-why">{combo.why}</span>
-      {units === 2 ? <span className="combo-why extended">{combo.whyExtended}</span> : null}
+      {selected ? (
+        <>
+          <SpoolGrid label="First AMS" slots={core} />
+          {extra.length > 0 ? <SpoolGrid label="Second AMS" slots={extra} /> : null}
+          <span className="combo-why">{combo.why}</span>
+          {units === 2 ? <span className="combo-why extended">{combo.whyExtended}</span> : null}
+        </>
+      ) : (
+        <span className="combo-mini" aria-hidden="true">
+          {[...core, ...extra].map((slot) => {
+            const filament = filamentById(slot.filamentId)
+            return (
+              <span
+                key={`${slot.filamentId}-${slot.role}`}
+                className={`combo-mini-chip ${slot.route ? 'route' : ''}`}
+                style={{ background: filament.hex }}
+              />
+            )
+          })}
+        </span>
+      )}
     </button>
   )
 }

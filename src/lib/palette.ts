@@ -3,6 +3,8 @@ export type PaletteColor = {
   hex: string
   /** When false, skipped for terrain matching (still selectable as route). Default true. */
   enabled?: boolean
+  /** Short job for this spool, such as "Sunlit snow". */
+  note?: string
 }
 export type Palette = { name: string; colors: PaletteColor[] }
 

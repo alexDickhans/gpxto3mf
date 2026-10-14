@@ -338,6 +338,7 @@ export function comboToPalette(combo: EnvironmentCombo, units: AmsUnits): Palett
         name: filament.name,
         hex: filament.hex,
         enabled: slot.terrain,
+        note: slot.role,
       }
     }),
   }

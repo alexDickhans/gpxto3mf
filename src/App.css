@@ -294,6 +294,10 @@ body,
 .swatch-count {
   font-size: 0.65rem;
   color: var(--ink-soft);
+  max-width: 7.2rem;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .palette-hint {
@@ -701,6 +705,24 @@ body,
   color: var(--ink-soft);
 }
 
+.combo-mini {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.28rem;
+}
+
+.combo-mini-chip {
+  width: 1.35rem;
+  height: 1.15rem;
+  border-radius: 2px;
+  border: 1px solid rgba(0, 0, 0, 0.18);
+}
+
+.combo-mini-chip.route {
+  outline: 2px solid var(--blaze);
+  outline-offset: 1px;
+}
+
 @media (max-width: 640px) {
   .hero {
     max-width: 100%;
@@ -725,5 +747,10 @@ body,
 
   .combo-spools {
     grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .season-select,
+  .fetch-slider {
+    display: none;
   }
 }

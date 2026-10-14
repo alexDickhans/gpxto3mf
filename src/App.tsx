@@ -5,7 +5,6 @@ import { ColorSelector, type LoadedCombo } from './components/ColorSelector'
 import { ControlsDrawer, type ControlValues } from './components/ControlsDrawer'
 import { comboById, comboToPalette, routeIndexFor } from './lib/bambuColors'
 import {
-  DEFAULT_PALETTE,
   DEFAULTS,
   parsePaletteText,
   runPipeline,
@@ -20,6 +19,11 @@ import { IMAGERY_SEASONS, type ImagerySeason } from './lib/sentinelSeason'
 import { setColorEnabled } from './lib/palette'
 import { downloadBlob, export3mf } from './lib/export3mf'
 import './App.css'
+
+const START_COMBO = comboById('high-alpine')
+const START_UNITS = 1 as const
+const START_PALETTE = comboToPalette(START_COMBO, START_UNITS)
+const START_ROUTE = routeIndexFor(START_COMBO, START_UNITS)
 
 const initialControls: ControlValues = {
   exaggeration: DEFAULTS.exaggeration,
@@ -36,16 +40,19 @@ const initialControls: ControlValues = {
 }
 
 function App() {
-  const [palette, setPalette] = useState<Palette>(DEFAULT_PALETTE)
+  const [palette, setPalette] = useState<Palette>(START_PALETTE)
   const [model, setModel] = useState<TerrainModel | null>(null)
-  const [routeColorIndex, setRouteColorIndex] = useState(
-    () => DEFAULT_PALETTE.colors.findIndex((c) => /route/i.test(c.name)) || 0,
-  )
+  const [routeColorIndex, setRouteColorIndex] = useState(START_ROUTE)
   const [controls, setControls] = useState<ControlValues>(initialControls)
   const [drawerOpen, setDrawerOpen] = useState(false)
   const [selectorOpen, setSelectorOpen] = useState(false)
-  const [loadedCombo, setLoadedCombo] = useState<LoadedCombo | null>(null)
-  const [status, setStatus] = useState('Upload a GPX to raise a topo')
+  const [loadedCombo, setLoadedCombo] = useState<LoadedCombo | null>({
+    id: START_COMBO.id,
+    units: START_UNITS,
+  })
+  const [status, setStatus] = useState(
+    `${START_COMBO.name} · ${START_PALETTE.colors.length} Bambu spools · ${START_PALETTE.colors[START_ROUTE].name} is the route`,
+  )
   const [busy, setBusy] = useState(false)
   const [trackName, setTrackName] = useState<string | null>(null)
   const gpxTextRef = useRef<string | null>(null)
